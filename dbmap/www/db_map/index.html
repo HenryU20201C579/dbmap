@@ -1,0 +1,122 @@
+{% extends "templates/web.html" %}
+{% block title %}DB Map · {{ site_name }}{% endblock %}
+
+{% block head_include %}
+<link rel="stylesheet" href="/assets/dbmap/css/db_map.css?v=5">
+<script src="https://unpkg.com/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
+{% endblock %}
+
+{% block page_content %}
+<div class="dbm-root">
+  <aside class="dbm-sidebar">
+    <header class="dbm-side-head">
+      <div class="dbm-brand">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        <h1>DB Map</h1>
+      </div>
+      <div class="dbm-site">{{ site_name }}</div>
+    </header>
+
+    <div class="dbm-search-row">
+      <input type="text" id="dbm-search" placeholder="Buscar DocType..." autocomplete="off" spellcheck="false">
+      <button type="button" id="dbm-search-clear" class="dbm-x-btn" hidden title="Limpiar">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="dbm-toggles">
+      <label class="dbm-toggle">
+        <input type="checkbox" id="dbm-toggle-aux" checked>
+        <span>Mostrar child tables</span>
+      </label>
+    </div>
+
+    <div class="dbm-modules-head">
+      <span>Módulos</span>
+      <span class="dbm-modules-count" id="dbm-modules-count">0</span>
+    </div>
+    <nav class="dbm-modules" id="dbm-modules">
+      <div class="dbm-modules-loading">Cargando módulos…</div>
+    </nav>
+
+    <footer class="dbm-side-foot">
+      <span id="dbm-stats">—</span>
+      <a href="/app" class="dbm-link-desk" title="Ir al Desk">Desk →</a>
+    </footer>
+  </aside>
+
+  <main class="dbm-main">
+    <header class="dbm-topbar">
+      <div class="dbm-crumbs" id="dbm-crumbs">
+        <span class="dbm-crumb">Selecciona un módulo o busca un DocType</span>
+      </div>
+      <div class="dbm-actions">
+        <button type="button" id="dbm-fit" class="dbm-icon-btn" title="Ajustar al canvas (F)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
+        </button>
+        <button type="button" id="dbm-relayout" class="dbm-icon-btn" title="Recalcular layout (L)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><line x1="9.5" y1="9.5" x2="6.5" y2="6.5"/><line x1="14.5" y1="9.5" x2="17.5" y2="6.5"/><line x1="9.5" y1="14.5" x2="6.5" y2="17.5"/><line x1="14.5" y1="14.5" x2="17.5" y2="17.5"/></svg>
+        </button>
+        <button type="button" id="dbm-export" class="dbm-icon-btn" title="Exportar PNG">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="dbm-canvas-wrap">
+      <div id="dbm-canvas" class="dbm-canvas"></div>
+      <div id="dbm-empty" class="dbm-empty">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/></svg>
+        <h2>Esperando selección</h2>
+        <p>Elige un módulo en la barra lateral o busca un DocType por nombre para dibujar el grafo de relaciones.</p>
+      </div>
+      <div id="dbm-loading" class="dbm-loading" hidden>
+        <span class="dbm-spinner"></span>
+        <span>Construyendo grafo…</span>
+      </div>
+      <div id="dbm-legend" class="dbm-legend" hidden>
+        <div class="dbm-legend-row"><span class="dbm-leg-line dbm-leg-link"></span>Link</div>
+        <div class="dbm-legend-row"><span class="dbm-leg-line dbm-leg-table"></span>Table / Child</div>
+        <div class="dbm-legend-row"><span class="dbm-leg-line dbm-leg-dynamic"></span>Dynamic Link</div>
+        <div class="dbm-legend-row"><span class="dbm-leg-line dbm-leg-custom"></span>Custom Field</div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="dbm-detail" id="dbm-detail" hidden>
+    <header class="dbm-detail-head">
+      <div class="dbm-detail-title">
+        <h2 id="dbm-detail-name">—</h2>
+        <span id="dbm-detail-module" class="dbm-pill">—</span>
+      </div>
+      <button type="button" class="dbm-x-btn" id="dbm-detail-close" title="Cerrar (Esc)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </header>
+    <div class="dbm-detail-meta" id="dbm-detail-meta"></div>
+    <div class="dbm-detail-section">
+      <h3>Campos de relación</h3>
+      <div id="dbm-detail-outgoing" class="dbm-detail-list"></div>
+    </div>
+    <div class="dbm-detail-section">
+      <h3>Referenciado por</h3>
+      <div id="dbm-detail-incoming" class="dbm-detail-list"></div>
+    </div>
+    <div class="dbm-detail-section">
+      <h3>Todos los campos <span id="dbm-detail-allcount" class="dbm-pill dbm-pill-dim">0</span></h3>
+      <div id="dbm-detail-all" class="dbm-detail-list dbm-detail-all"></div>
+    </div>
+    <footer class="dbm-detail-foot">
+      <a id="dbm-detail-desk" href="#" target="_blank" rel="noopener" class="dbm-btn-primary">
+        Ver lista en Desk
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+      <button type="button" id="dbm-detail-focus" class="dbm-btn-secondary">
+        Centrar en grafo
+      </button>
+    </footer>
+  </aside>
+</div>
+
+<script src="/assets/dbmap/js/db_map.js?v=5"></script>
+{% endblock %}

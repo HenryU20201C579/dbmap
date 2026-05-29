@@ -1,0 +1,593 @@
+/* DB Map — frontend del visualizador interactivo.
+ *
+ * Flujo:
+ *  1. Al cargar: fetch /api/method/dbmap.api.get_schema_graph SIN filtros para
+ *     poblar la lista de módulos del sidebar. El canvas queda vacío.
+ *  2. Click en un módulo: refetch con ?module=X y dibuja el grafo (DocTypes
+ *     del módulo + sus vecinos directos a 1 hop).
+ *  3. Búsqueda: refetch con ?search=X (también devuelve nodos + vecinos).
+ *  4. Click en un nodo del grafo: fetch /api/method/dbmap.api.get_doctype_detail
+ *     y rellena el panel lateral derecho.
+ *
+ * Persistencia: en sessionStorage guardamos el módulo activo y el toggle de
+ * child tables — sobrevive a F5 pero no a cierre de pestaña (cada
+ * dispositivo arranca limpio si quiere).
+ */
+(function () {
+    "use strict";
+
+    if (typeof cytoscape === "undefined") {
+        console.error("[dbmap] Cytoscape no cargó");
+        return;
+    }
+
+    const $ = (id) => document.getElementById(id);
+    const ROOT = document.querySelector(".dbm-root");
+    if (!ROOT) return;
+
+    const els = {
+        search: $("dbm-search"),
+        searchClear: $("dbm-search-clear"),
+        toggleAux: $("dbm-toggle-aux"),
+        modules: $("dbm-modules"),
+        modulesCount: $("dbm-modules-count"),
+        crumbs: $("dbm-crumbs"),
+        canvas: $("dbm-canvas"),
+        empty: $("dbm-empty"),
+        loading: $("dbm-loading"),
+        legend: $("dbm-legend"),
+        stats: $("dbm-stats"),
+        fitBtn: $("dbm-fit"),
+        relayoutBtn: $("dbm-relayout"),
+        exportBtn: $("dbm-export"),
+        detail: $("dbm-detail"),
+        detailName: $("dbm-detail-name"),
+        detailModule: $("dbm-detail-module"),
+        detailMeta: $("dbm-detail-meta"),
+        detailOut: $("dbm-detail-outgoing"),
+        detailIn: $("dbm-detail-incoming"),
+        detailAll: $("dbm-detail-all"),
+        detailAllCount: $("dbm-detail-allcount"),
+        detailDesk: $("dbm-detail-desk"),
+        detailFocus: $("dbm-detail-focus"),
+        detailClose: $("dbm-detail-close"),
+    };
+
+    const state = {
+        modules: [],
+        moduleCounts: {},   // {moduleName: nDoctypesShown}
+        activeModule: null,
+        searchTerm: "",
+        cy: null,
+        currentDoctype: null,
+    };
+
+    const SS = {
+        MOD: "dbm-active-module",
+        AUX: "dbm-include-aux",
+    };
+
+    // GET en vez de POST: endpoint es read-only, evita la dependencia del CSRF
+    // (que en bootstrap inicial puede no estar disponible aún).
+    async function apiCall(method, params) {
+        const qs = new URLSearchParams(params || {}).toString();
+        const url = "/api/method/" + method + (qs ? "?" + qs : "");
+        const res = await fetch(url, {
+            method: "GET",
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+            credentials: "same-origin",
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const j = await res.json();
+        return j && j.message;
+    }
+
+    // ───── Carga de módulos (poblar sidebar) ─────
+    async function bootstrap() {
+        showLoading(true);
+        try {
+            // 1ª llamada: sin filtros → trae todos los módulos + conteo total.
+            const data = await apiCall("dbmap.api.get_schema_graph", { include_aux: 0 });
+            state.modules = data.modules || [];
+            // Conteo de doctypes por módulo: lo derivamos del payload completo.
+            state.moduleCounts = {};
+            (data.nodes || []).forEach(n => {
+                const m = n.module || "(sin módulo)";
+                state.moduleCounts[m] = (state.moduleCounts[m] || 0) + 1;
+            });
+            renderModules();
+            els.stats.textContent = `${data.total_doctypes} DocTypes · ${state.modules.length} módulos`;
+            // Restaurar selección previa (sessionStorage).
+            const lastMod = sessionStorage.getItem(SS.MOD);
+            if (lastMod && state.modules.includes(lastMod)) {
+                activateModule(lastMod);
+            } else {
+                showEmpty(true);
+            }
+            // Restaurar toggle de aux.
+            const aux = sessionStorage.getItem(SS.AUX);
+            if (aux === "0") els.toggleAux.checked = false;
+        } catch (e) {
+            console.error("[dbmap] bootstrap fallo", e);
+            els.modules.innerHTML = '<div class="dbm-modules-loading" style="color:var(--dbm-danger)">Error al cargar módulos</div>';
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    function renderModules() {
+        els.modulesCount.textContent = state.modules.length;
+        els.modules.innerHTML = "";
+        state.modules.forEach(name => {
+            const item = document.createElement("div");
+            item.className = "dbm-mod-item";
+            item.dataset.module = name;
+            item.innerHTML = `
+                <span class="dbm-mod-name">${escapeHtml(name)}</span>
+                <span class="dbm-mod-count">${state.moduleCounts[name] || 0}</span>
+            `;
+            item.addEventListener("click", () => activateModule(name));
+            els.modules.appendChild(item);
+        });
+    }
+
+    function highlightActiveModule() {
+        els.modules.querySelectorAll(".dbm-mod-item").forEach(el => {
+            el.classList.toggle("is-active", el.dataset.module === state.activeModule);
+        });
+    }
+
+    // ───── Cargar grafo ─────
+    async function activateModule(name) {
+        state.activeModule = name;
+        state.searchTerm = "";
+        els.search.value = "";
+        els.searchClear.hidden = true;
+        sessionStorage.setItem(SS.MOD, name);
+        highlightActiveModule();
+        await loadGraph({ module: name });
+    }
+
+    async function activateSearch(term) {
+        state.searchTerm = term.trim();
+        if (!state.searchTerm) {
+            // Volver al módulo si había uno.
+            if (state.activeModule) activateModule(state.activeModule);
+            else showEmpty(true);
+            return;
+        }
+        state.activeModule = null;
+        highlightActiveModule();
+        await loadGraph({ search: state.searchTerm });
+    }
+
+    async function loadGraph(filter) {
+        showLoading(true);
+        showEmpty(false);
+        const params = {
+            include_aux: els.toggleAux.checked ? 1 : 0,
+        };
+        if (filter.module) params.module = filter.module;
+        if (filter.search) params.search = filter.search;
+
+        try {
+            const data = await apiCall("dbmap.api.get_schema_graph", params);
+            renderGraph(data);
+            updateCrumbs(filter, data);
+        } catch (e) {
+            console.error("[dbmap] loadGraph fallo", e);
+            els.crumbs.innerHTML = '<span class="dbm-crumb" style="color:var(--dbm-danger)">Error: ' + escapeHtml(e.message) + '</span>';
+        } finally {
+            showLoading(false);
+        }
+    }
+
+    function updateCrumbs(filter, data) {
+        const parts = [];
+        if (filter.module) {
+            parts.push(`<span class="dbm-crumb">Módulo</span>`);
+            parts.push(`<span class="dbm-crumb-sep">/</span>`);
+            parts.push(`<span class="dbm-crumb is-active">${escapeHtml(filter.module)}</span>`);
+        } else if (filter.search) {
+            parts.push(`<span class="dbm-crumb">Búsqueda</span>`);
+            parts.push(`<span class="dbm-crumb-sep">/</span>`);
+            parts.push(`<span class="dbm-crumb is-active">"${escapeHtml(filter.search)}"</span>`);
+        }
+        parts.push(`<span class="dbm-crumb-sep">·</span>`);
+        parts.push(`<span class="dbm-crumb">${data.shown_doctypes} nodos · ${data.edges.length} relaciones</span>`);
+        els.crumbs.innerHTML = parts.join("");
+    }
+
+    // ───── Cytoscape ─────
+    function renderGraph(data) {
+        if (state.cy) {
+            try { state.cy.destroy(); } catch (_) {}
+            state.cy = null;
+        }
+        els.legend.hidden = false;
+
+        const cyNodes = (data.nodes || []).map(n => ({
+            data: {
+                id: n.id,
+                label: n.label,
+                module: n.module,
+                istable: n.istable,
+                issingle: n.issingle,
+                custom: n.custom,
+                placeholder: n.placeholder || 0,
+                fieldCount: n.fieldCount,
+                linkCount: n.linkCount,
+            },
+            classes: [
+                n.istable ? "n-table" : "",
+                n.issingle ? "n-single" : "",
+                n.custom ? "n-custom" : "",
+                n.placeholder ? "n-placeholder" : "",
+            ].filter(Boolean).join(" "),
+        }));
+
+        const cyEdges = (data.edges || []).map(e => ({
+            data: {
+                id: e.id,
+                source: e.source,
+                target: e.target,
+                label: e.label,
+                fieldname: e.fieldname,
+                type: e.type,
+                custom: e.custom,
+            },
+            classes: [
+                e.type === "Table" || e.type === "Table MultiSelect" ? "e-table" : "",
+                e.type === "Dynamic Link" ? "e-dynamic" : "",
+                e.type === "Link" ? "e-link" : "",
+                e.custom ? "e-custom" : "",
+            ].filter(Boolean).join(" "),
+        }));
+
+        state.cy = cytoscape({
+            container: els.canvas,
+            elements: { nodes: cyNodes, edges: cyEdges },
+            wheelSensitivity: 0.2,
+            style: cyStyles(),
+            layout: pickLayout(cyNodes.length),
+        });
+
+        state.cy.on("tap", "node", (evt) => {
+            const id = evt.target.data("id");
+            if (id === "*dynamic*") return;
+            openDetail(id);
+        });
+        state.cy.on("tap", (evt) => {
+            if (evt.target === state.cy) {
+                // click en vacío → cerrar detail
+                closeDetail();
+            }
+        });
+        // Hover: resaltar vecinos.
+        state.cy.on("mouseover", "node", (evt) => {
+            const node = evt.target;
+            state.cy.elements().addClass("dim");
+            node.removeClass("dim");
+            node.neighborhood().removeClass("dim");
+        });
+        state.cy.on("mouseout", "node", () => {
+            state.cy.elements().removeClass("dim");
+        });
+    }
+
+    function pickLayout(nodeCount) {
+        // Layout `cose` viene built-in con cytoscape — sin dependencias externas.
+        // Parametros ajustados para que ~50 nodos no queden encimados.
+        return {
+            name: "cose",
+            animate: false,
+            fit: true,
+            padding: 30,
+            nodeRepulsion: () => 80000,
+            idealEdgeLength: () => (nodeCount > 40 ? 130 : 90),
+            edgeElasticity: () => 32,
+            gravity: 0.4,
+            numIter: 1500,
+            componentSpacing: 60,
+            nestingFactor: 1.2,
+        };
+    }
+
+    function cyStyles() {
+        return [
+            {
+                selector: "node",
+                style: {
+                    "background-color": "#1c1c24",
+                    "border-color": "#3a3a48",
+                    "border-width": 1.5,
+                    "label": "data(label)",
+                    "font-size": 11,
+                    "font-family": "Geist, sans-serif",
+                    "color": "#e6e6ed",
+                    "text-valign": "center",
+                    "text-halign": "center",
+                    "text-wrap": "ellipsis",
+                    "text-max-width": "120px",
+                    "padding": "10px",
+                    "width": "label",
+                    "height": "label",
+                    "shape": "round-rectangle",
+                    "transition-property": "background-color, border-color, opacity",
+                    "transition-duration": "150ms",
+                },
+            },
+            {
+                selector: "node.n-table",
+                style: { "border-color": "#c084fc", "background-color": "#1d1820" },
+            },
+            {
+                selector: "node.n-single",
+                style: { "border-style": "dashed" },
+            },
+            {
+                selector: "node.n-custom",
+                style: { "border-color": "#fb7185" },
+            },
+            {
+                selector: "node.n-placeholder",
+                style: {
+                    "background-color": "#1c1c24",
+                    "border-color": "#fbbf24",
+                    "border-style": "dashed",
+                    "color": "#fbbf24",
+                    "font-style": "italic",
+                },
+            },
+            {
+                selector: "node:selected",
+                style: {
+                    "border-color": "#6ee7b7",
+                    "border-width": 2.5,
+                    "background-color": "#1f2a25",
+                },
+            },
+            {
+                selector: "edge",
+                style: {
+                    "width": 1.2,
+                    "line-color": "#60a5fa",
+                    "target-arrow-color": "#60a5fa",
+                    "target-arrow-shape": "triangle",
+                    "curve-style": "bezier",
+                    "arrow-scale": 0.9,
+                    "opacity": 0.65,
+                    "transition-property": "opacity, line-color, width",
+                    "transition-duration": "150ms",
+                },
+            },
+            {
+                selector: "edge.e-table",
+                style: {
+                    "line-color": "#c084fc",
+                    "target-arrow-color": "#c084fc",
+                    "width": 1.6,
+                },
+            },
+            {
+                selector: "edge.e-dynamic",
+                style: {
+                    "line-color": "#fbbf24",
+                    "target-arrow-color": "#fbbf24",
+                    "line-style": "dashed",
+                },
+            },
+            {
+                selector: "edge.e-custom",
+                style: {
+                    "line-color": "#fb7185",
+                    "target-arrow-color": "#fb7185",
+                },
+            },
+            {
+                selector: ".dim",
+                style: { "opacity": 0.15 },
+            },
+        ];
+    }
+
+    // ───── Panel de detalle ─────
+    async function openDetail(name) {
+        state.currentDoctype = name;
+        els.detail.hidden = false;
+        ROOT.dataset.detail = "open";
+        els.detailName.textContent = name;
+        els.detailModule.textContent = "…";
+        els.detailMeta.innerHTML = "";
+        els.detailOut.innerHTML = '<div style="font-size:11.5px;color:var(--dbm-text-3);font-style:italic">Cargando…</div>';
+        els.detailIn.innerHTML = "";
+        els.detailAll.innerHTML = "";
+        els.detailAllCount.textContent = "0";
+
+        try {
+            const data = await apiCall("dbmap.api.get_doctype_detail", { name });
+            renderDetail(data);
+        } catch (e) {
+            els.detailOut.innerHTML = '<div style="color:var(--dbm-danger);font-size:12px">Error: ' + escapeHtml(e.message) + '</div>';
+        }
+    }
+
+    function renderDetail(data) {
+        const dt = data.doctype || {};
+        els.detailName.textContent = dt.name || state.currentDoctype;
+        els.detailModule.textContent = dt.module || "—";
+
+        // Pills de metadata.
+        const meta = [];
+        meta.push(`<div class="dbm-meta-item is-table">tabla:<strong>${escapeHtml(data.table_name || "—")}</strong></div>`);
+        if (data.row_count != null) {
+            meta.push(`<div class="dbm-meta-item">rows:<strong>${Number(data.row_count).toLocaleString()}</strong></div>`);
+        }
+        if (dt.istable) meta.push(`<span class="dbm-pill dbm-pill-table">child table</span>`);
+        if (dt.issingle) meta.push(`<span class="dbm-pill dbm-pill-warn">single</span>`);
+        if (dt.custom) meta.push(`<span class="dbm-pill dbm-pill-custom">custom doctype</span>`);
+        if (dt.autoname) meta.push(`<div class="dbm-meta-item">autoname:<strong>${escapeHtml(dt.autoname)}</strong></div>`);
+        els.detailMeta.innerHTML = meta.join("");
+
+        // Outgoing (campos de relación).
+        const outFields = (data.fields || []).filter(f =>
+            ["Link", "Table", "Table MultiSelect", "Dynamic Link"].includes(f.fieldtype)
+        );
+        els.detailOut.innerHTML = "";
+        outFields.forEach(f => els.detailOut.appendChild(renderRelRow(f, "outgoing")));
+
+        // Incoming.
+        els.detailIn.innerHTML = "";
+        (data.incoming || []).forEach(inc => els.detailIn.appendChild(renderRelRow(inc, "incoming")));
+
+        // Todos los campos.
+        els.detailAllCount.textContent = (data.fields || []).length;
+        els.detailAll.innerHTML = "";
+        (data.fields || []).forEach(f => els.detailAll.appendChild(renderFieldRow(f)));
+
+        // Botón "Ver en Desk".
+        els.detailDesk.href = `/app/${slugifyDoctype(state.currentDoctype)}`;
+    }
+
+    function renderRelRow(rel, kind) {
+        const row = document.createElement("div");
+        row.className = "dbm-rel-row";
+        const fieldname = rel.fieldname || "";
+        const target = kind === "outgoing" ? rel.options : rel.from_doctype;
+        const type = rel.fieldtype || rel.type || "Link";
+        const isCustom = !!rel.is_custom;
+        const typeClass = type.includes("Table") ? "is-table"
+            : type === "Dynamic Link" ? "is-dynamic"
+            : isCustom ? "is-custom" : "";
+        const arrow = kind === "outgoing" ? "→" : "←";
+        row.innerHTML = `
+            <div class="dbm-rel-line1">
+                <span class="dbm-rel-field">${escapeHtml(rel.label || fieldname)}</span>
+                <span class="dbm-rel-arrow">${arrow}</span>
+                <span class="dbm-rel-target">${escapeHtml(target || "—")}</span>
+                <span class="dbm-rel-type ${typeClass}">${escapeHtml(type)}</span>
+            </div>
+            <div class="dbm-rel-label">${escapeHtml(fieldname)}</div>
+        `;
+        if (target && target !== "*dynamic*") {
+            row.addEventListener("click", () => openDetail(target));
+        }
+        return row;
+    }
+
+    function renderFieldRow(f) {
+        const row = document.createElement("div");
+        row.className = "dbm-rel-row";
+        const ft = f.fieldtype || "Data";
+        const opts = f.options ? ` → ${f.options.split("\n")[0]}` : "";
+        row.innerHTML = `
+            <div class="dbm-rel-line1">
+                <span class="dbm-rel-field">${escapeHtml(f.label || f.fieldname || "—")}</span>
+                <span class="dbm-rel-type">${escapeHtml(ft)}${escapeHtml(opts)}</span>
+            </div>
+            <div class="dbm-rel-label">${escapeHtml(f.fieldname || "")} ${f.reqd ? "· requerido" : ""}${f.is_unique ? " · único" : ""}${f.is_custom ? " · custom" : ""}</div>
+        `;
+        return row;
+    }
+
+    function closeDetail() {
+        els.detail.hidden = true;
+        ROOT.dataset.detail = "closed";
+        state.currentDoctype = null;
+        if (state.cy) state.cy.elements().unselect();
+    }
+
+    function focusOnCurrent() {
+        if (!state.cy || !state.currentDoctype) return;
+        const n = state.cy.getElementById(state.currentDoctype);
+        if (!n || n.empty()) return;
+        n.select();
+        state.cy.animate({ center: { eles: n }, zoom: Math.max(state.cy.zoom(), 1.2) }, { duration: 350 });
+    }
+
+    // ───── Helpers ─────
+    function showLoading(on) {
+        els.loading.hidden = !on;
+        if (on) els.empty.style.display = "none";
+        else els.empty.style.display = "";
+    }
+    function showEmpty(on) {
+        els.empty.style.display = on ? "" : "none";
+        els.legend.hidden = on;
+    }
+    function escapeHtml(s) {
+        if (s == null) return "";
+        return String(s).replace(/[&<>"']/g, c => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[c]));
+    }
+    function slugifyDoctype(name) {
+        return (name || "").toLowerCase().replace(/\s+/g, "-");
+    }
+
+    // ───── Bindings ─────
+    function bind() {
+        let searchTimer = null;
+        els.search.addEventListener("input", () => {
+            clearTimeout(searchTimer);
+            const v = els.search.value;
+            els.searchClear.hidden = !v;
+            searchTimer = setTimeout(() => activateSearch(v), 280);
+        });
+        els.searchClear.addEventListener("click", () => {
+            els.search.value = "";
+            els.searchClear.hidden = true;
+            activateSearch("");
+        });
+        els.toggleAux.addEventListener("change", () => {
+            sessionStorage.setItem(SS.AUX, els.toggleAux.checked ? "1" : "0");
+            if (state.activeModule) activateModule(state.activeModule);
+            else if (state.searchTerm) activateSearch(state.searchTerm);
+        });
+        els.fitBtn.addEventListener("click", () => state.cy && state.cy.fit(undefined, 30));
+        els.relayoutBtn.addEventListener("click", () => {
+            if (!state.cy) return;
+            state.cy.layout(pickLayout(state.cy.nodes().length)).run();
+        });
+        els.exportBtn.addEventListener("click", () => {
+            if (!state.cy) return;
+            const png = state.cy.png({ full: true, scale: 2, bg: "#0c0c10" });
+            const a = document.createElement("a");
+            a.href = png;
+            a.download = `db-map-${state.activeModule || state.searchTerm || "graph"}-${Date.now()}.png`;
+            a.click();
+        });
+        els.detailClose.addEventListener("click", closeDetail);
+        els.detailFocus.addEventListener("click", focusOnCurrent);
+
+        document.addEventListener("keydown", (e) => {
+            if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+            if (e.key === "Escape") closeDetail();
+            if (e.key === "f" || e.key === "F") {
+                if (state.cy) state.cy.fit(undefined, 30);
+            }
+            if (e.key === "l" || e.key === "L") {
+                if (state.cy) state.cy.layout(pickLayout(state.cy.nodes().length)).run();
+            }
+            if (e.key === "/") {
+                e.preventDefault();
+                els.search.focus();
+                els.search.select();
+            }
+        });
+    }
+
+    bind();
+    bootstrap();
+
+    // API global para debug / integraciones externas. Permite, por ejemplo:
+    //   window.dbmap.openDoctype('Sales Order')
+    //   window.dbmap.activateModule('Selling')
+    window.dbmap = {
+        get state() { return state; },
+        openDoctype: openDetail,
+        activateModule,
+        activateSearch,
+        close: closeDetail,
+    };
+})();
