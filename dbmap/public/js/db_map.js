@@ -47,17 +47,21 @@
         fitBtn: $("dbm-fit"),
         relayoutBtn: $("dbm-relayout"),
         exportBtn: $("dbm-export"),
-        detail: $("dbm-detail"),
-        detailName: $("dbm-detail-name"),
-        detailModule: $("dbm-detail-module"),
-        detailMeta: $("dbm-detail-meta"),
-        detailOut: $("dbm-detail-outgoing"),
-        detailIn: $("dbm-detail-incoming"),
-        detailAll: $("dbm-detail-all"),
-        detailAllCount: $("dbm-detail-allcount"),
-        detailDesk: $("dbm-detail-desk"),
-        detailFocus: $("dbm-detail-focus"),
-        detailClose: $("dbm-detail-close"),
+        // Modal flotante (reemplaza el panel lateral .dbm-detail).
+        modalBackdrop: $("dbm-modal-backdrop"),
+        modal: $("dbm-modal"),
+        modalName: $("dbm-modal-name"),
+        modalPills: $("dbm-modal-pills"),
+        modalClose: $("dbm-modal-close"),
+        modalDesk: $("dbm-modal-desk"),
+        modalFocus: $("dbm-modal-focus"),
+        modalErd: $("dbm-modal-erd"),
+        paneOut: $("dbm-pane-outgoing"),
+        paneIn: $("dbm-pane-incoming"),
+        paneAll: $("dbm-pane-all"),
+        tabCountOut: $("dbm-tab-count-out"),
+        tabCountIn: $("dbm-tab-count-in"),
+        tabCountAll: $("dbm-tab-count-all"),
     };
 
     const state = {
@@ -577,67 +581,69 @@
         ];
     }
 
-    // ───── Panel de detalle ─────
+    // ───── Modal de detalle del DocType ─────
     async function openDetail(name) {
         state.currentDoctype = name;
-        els.detail.hidden = false;
-        ROOT.dataset.detail = "open";
-        els.detailName.textContent = name;
-        els.detailModule.textContent = "…";
-        els.detailMeta.innerHTML = "";
-        els.detailOut.innerHTML = '<div style="font-size:11.5px;color:var(--dbm-text-3);font-style:italic">Cargando…</div>';
-        els.detailIn.innerHTML = "";
-        els.detailAll.innerHTML = "";
-        els.detailAllCount.textContent = "0";
+        els.modalBackdrop.hidden = false;
+        els.modalName.textContent = name;
+        els.modalPills.innerHTML = '<span class="dbm-pill dbm-pill-dim">cargando…</span>';
+        els.paneOut.innerHTML = "";
+        els.paneIn.innerHTML = "";
+        els.paneAll.innerHTML = "";
+        els.tabCountOut.textContent = "0";
+        els.tabCountIn.textContent = "0";
+        els.tabCountAll.textContent = "0";
+        switchTab("outgoing");
+        document.body.style.overflow = "hidden";
 
         try {
             const data = await apiCall("dbmap.api.get_doctype_detail", { name });
             renderDetail(data);
         } catch (e) {
-            els.detailOut.innerHTML = '<div style="color:var(--dbm-danger);font-size:12px">Error: ' + escapeHtml(e.message) + '</div>';
+            els.modalPills.innerHTML = `<span class="dbm-pill" style="color:var(--dbm-danger);border-color:var(--dbm-danger)">Error: ${escapeHtml(e.message)}</span>`;
         }
     }
 
     function renderDetail(data) {
         const dt = data.doctype || {};
-        els.detailName.textContent = dt.name || state.currentDoctype;
-        els.detailModule.textContent = dt.module || "—";
+        els.modalName.textContent = dt.name || state.currentDoctype;
 
-        // Pills de metadata.
-        const meta = [];
-        meta.push(`<div class="dbm-meta-item is-table">tabla:<strong>${escapeHtml(data.table_name || "—")}</strong></div>`);
+        // Pills de metadata en el header.
+        const pills = [];
+        if (dt.module) pills.push(`<span class="dbm-pill">${escapeHtml(dt.module)}</span>`);
+        pills.push(`<span class="dbm-pill dbm-pill-mono">${escapeHtml(data.table_name || "—")}</span>`);
         if (data.row_count != null) {
-            meta.push(`<div class="dbm-meta-item">rows:<strong>${Number(data.row_count).toLocaleString()}</strong></div>`);
+            pills.push(`<span class="dbm-pill">${Number(data.row_count).toLocaleString()} rows</span>`);
         }
-        if (dt.istable) meta.push(`<span class="dbm-pill dbm-pill-table">child table</span>`);
-        if (dt.issingle) meta.push(`<span class="dbm-pill dbm-pill-warn">single</span>`);
-        if (dt.custom) meta.push(`<span class="dbm-pill dbm-pill-custom">custom doctype</span>`);
-        if (dt.autoname) meta.push(`<div class="dbm-meta-item">autoname:<strong>${escapeHtml(dt.autoname)}</strong></div>`);
-        els.detailMeta.innerHTML = meta.join("");
+        if (dt.istable) pills.push(`<span class="dbm-pill dbm-pill-table">child table</span>`);
+        if (dt.issingle) pills.push(`<span class="dbm-pill dbm-pill-warn">single</span>`);
+        if (dt.custom) pills.push(`<span class="dbm-pill dbm-pill-custom">custom doctype</span>`);
+        if (dt.autoname) pills.push(`<span class="dbm-pill" title="autoname">naming: ${escapeHtml(dt.autoname)}</span>`);
+        els.modalPills.innerHTML = pills.join("");
 
-        // Outgoing (campos de relación).
+        // Outgoing (campos Link/Table del DocType).
         const outFields = (data.fields || []).filter(f =>
             ["Link", "Table", "Table MultiSelect", "Dynamic Link"].includes(f.fieldtype)
         );
-        els.detailOut.innerHTML = "";
-        outFields.forEach(f => els.detailOut.appendChild(renderRelRow(f, "outgoing")));
+        els.paneOut.innerHTML = "";
+        outFields.forEach(f => els.paneOut.appendChild(renderRelCard(f, "outgoing")));
+        els.tabCountOut.textContent = outFields.length;
 
-        // Incoming.
-        els.detailIn.innerHTML = "";
-        (data.incoming || []).forEach(inc => els.detailIn.appendChild(renderRelRow(inc, "incoming")));
+        // Incoming (otros DocTypes que referencian este).
+        els.paneIn.innerHTML = "";
+        (data.incoming || []).forEach(inc => els.paneIn.appendChild(renderRelCard(inc, "incoming")));
+        els.tabCountIn.textContent = (data.incoming || []).length;
 
-        // Todos los campos.
-        els.detailAllCount.textContent = (data.fields || []).length;
-        els.detailAll.innerHTML = "";
-        (data.fields || []).forEach(f => els.detailAll.appendChild(renderFieldRow(f)));
+        // Todos los campos (no solo relacionales).
+        els.paneAll.innerHTML = "";
+        (data.fields || []).forEach(f => els.paneAll.appendChild(renderFieldCard(f)));
+        els.tabCountAll.textContent = (data.fields || []).length;
 
-        // Botón "Ver en Desk".
-        els.detailDesk.href = `/app/${slugifyDoctype(state.currentDoctype)}`;
+        els.modalDesk.href = `/app/${slugifyDoctype(state.currentDoctype)}`;
     }
 
-    function renderRelRow(rel, kind) {
-        const row = document.createElement("div");
-        row.className = "dbm-rel-row";
+    function renderRelCard(rel, kind) {
+        const card = document.createElement("div");
         const fieldname = rel.fieldname || "";
         const target = kind === "outgoing" ? rel.options : rel.from_doctype;
         const type = rel.fieldtype || rel.type || "Link";
@@ -646,49 +652,93 @@
             : type === "Dynamic Link" ? "is-dynamic"
             : isCustom ? "is-custom" : "";
         const arrow = kind === "outgoing" ? "→" : "←";
-        row.innerHTML = `
-            <div class="dbm-rel-line1">
-                <span class="dbm-rel-field">${escapeHtml(rel.label || fieldname)}</span>
-                <span class="dbm-rel-arrow">${arrow}</span>
-                <span class="dbm-rel-target">${escapeHtml(target || "—")}</span>
-                <span class="dbm-rel-type ${typeClass}">${escapeHtml(type)}</span>
+        const navigable = target && target !== "*dynamic*";
+        card.className = "dbm-card" + (navigable ? " is-clickable" : "");
+        if (navigable) card.title = `Click para abrir ${target}`;
+        const metaItems = [];
+        if (rel.reqd) metaItems.push("requerido");
+        if (rel.is_unique) metaItems.push("único");
+        if (isCustom) metaItems.push("custom");
+        card.innerHTML = `
+            <div class="dbm-card-line1">
+                <span class="dbm-card-label">${escapeHtml(rel.label || fieldname)}</span>
+                <span class="dbm-card-type ${typeClass}">${escapeHtml(type)}</span>
             </div>
-            <div class="dbm-rel-label">${escapeHtml(fieldname)}</div>
+            <div class="dbm-card-line1">
+                <span class="dbm-card-arrow">${arrow}</span>
+                <span class="dbm-card-target">${escapeHtml(target || "—")}</span>
+            </div>
+            <div class="dbm-card-fname">${escapeHtml(fieldname)}</div>
+            ${metaItems.length ? `<div class="dbm-card-meta">${metaItems.map(m=>`<span>${m}</span>`).join("")}</div>` : ""}
         `;
-        if (target && target !== "*dynamic*") {
-            row.addEventListener("click", () => openDetail(target));
+        if (navigable) {
+            card.addEventListener("click", () => openDetail(target));
         }
-        return row;
+        return card;
     }
 
-    function renderFieldRow(f) {
-        const row = document.createElement("div");
-        row.className = "dbm-rel-row";
+    function renderFieldCard(f) {
+        const card = document.createElement("div");
+        card.className = "dbm-card";
         const ft = f.fieldtype || "Data";
-        const opts = f.options ? ` → ${f.options.split("\n")[0]}` : "";
-        row.innerHTML = `
-            <div class="dbm-rel-line1">
-                <span class="dbm-rel-field">${escapeHtml(f.label || f.fieldname || "—")}</span>
-                <span class="dbm-rel-type">${escapeHtml(ft)}${escapeHtml(opts)}</span>
+        const opts = f.options ? f.options.split("\n")[0] : "";
+        const metaItems = [];
+        if (f.reqd) metaItems.push("requerido");
+        if (f.is_unique) metaItems.push("único");
+        if (f.is_custom) metaItems.push("custom");
+        card.innerHTML = `
+            <div class="dbm-card-line1">
+                <span class="dbm-card-label">${escapeHtml(f.label || f.fieldname || "—")}</span>
+                <span class="dbm-card-type">${escapeHtml(ft)}</span>
             </div>
-            <div class="dbm-rel-label">${escapeHtml(f.fieldname || "")} ${f.reqd ? "· requerido" : ""}${f.is_unique ? " · único" : ""}${f.is_custom ? " · custom" : ""}</div>
+            ${opts ? `<div class="dbm-card-line1"><span class="dbm-card-arrow">→</span><span class="dbm-card-target">${escapeHtml(opts)}</span></div>` : ""}
+            <div class="dbm-card-fname">${escapeHtml(f.fieldname || "")}</div>
+            ${metaItems.length ? `<div class="dbm-card-meta">${metaItems.map(m=>`<span>${m}</span>`).join("")}</div>` : ""}
         `;
-        return row;
+        return card;
     }
 
     function closeDetail() {
-        els.detail.hidden = true;
-        ROOT.dataset.detail = "closed";
+        els.modalBackdrop.hidden = true;
+        document.body.style.overflow = "";
         state.currentDoctype = null;
         if (state.cy) state.cy.elements().unselect();
+    }
+
+    function switchTab(name) {
+        document.querySelectorAll(".dbm-tab").forEach(t => {
+            const active = t.dataset.tab === name;
+            t.classList.toggle("is-active", active);
+            t.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        document.querySelectorAll(".dbm-modal-pane").forEach(p => {
+            p.classList.toggle("is-active", p.dataset.pane === name);
+        });
+        // Scroll-to-top al cambiar de pestaña.
+        const body = document.querySelector(".dbm-modal-body");
+        if (body) body.scrollTop = 0;
     }
 
     function focusOnCurrent() {
         if (!state.cy || !state.currentDoctype) return;
         const n = state.cy.getElementById(state.currentDoctype);
-        if (!n || n.empty()) return;
+        if (!n || n.empty()) {
+            // El doctype no está en el grafo actual → activarlo focused.
+            closeDetail();
+            activateDoctype(state.currentDoctype);
+            return;
+        }
+        closeDetail();
         n.select();
         state.cy.animate({ center: { eles: n }, zoom: Math.max(state.cy.zoom(), 1.2) }, { duration: 350 });
+    }
+
+    function focusErdOnCurrent() {
+        // Cierra el modal y dispara activateDoctype para dibujar ERD focused.
+        if (!state.currentDoctype) return;
+        const name = state.currentDoctype;
+        closeDetail();
+        activateDoctype(name);
     }
 
     // ───── Helpers ─────
@@ -768,12 +818,27 @@
             a.download = `db-map-${state.activeModule || state.searchTerm || "graph"}-${Date.now()}.png`;
             a.click();
         });
-        els.detailClose.addEventListener("click", closeDetail);
-        els.detailFocus.addEventListener("click", focusOnCurrent);
+        // Modal: cerrar, focus en grafo, ver ERD focused.
+        els.modalClose.addEventListener("click", closeDetail);
+        els.modalFocus.addEventListener("click", focusOnCurrent);
+        els.modalErd.addEventListener("click", focusErdOnCurrent);
+        // Click en el backdrop (no en el modal mismo) cierra.
+        els.modalBackdrop.addEventListener("click", (e) => {
+            if (e.target === els.modalBackdrop) closeDetail();
+        });
+        // Tabs del modal.
+        document.querySelectorAll(".dbm-tab").forEach(t => {
+            t.addEventListener("click", () => switchTab(t.dataset.tab));
+        });
 
         document.addEventListener("keydown", (e) => {
-            if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-            if (e.key === "Escape") closeDetail();
+            const inField = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
+            // Esc cierra modal (siempre, incluso desde input).
+            if (e.key === "Escape" && !els.modalBackdrop.hidden) {
+                closeDetail();
+                return;
+            }
+            if (inField) return;
             if (e.key === "f" || e.key === "F") {
                 if (state.cy) state.cy.fit(undefined, 30);
             }
