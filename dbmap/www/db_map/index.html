@@ -2,7 +2,7 @@
 {% block title %}DB Map · {{ site_name }}{% endblock %}
 
 {% block head_include %}
-<link rel="stylesheet" href="/assets/dbmap/css/db_map.css?v=7">
+<link rel="stylesheet" href="/assets/dbmap/css/db_map.css?v=9">
 <script src="https://unpkg.com/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
 <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
@@ -24,6 +24,7 @@
       <button type="button" id="dbm-search-clear" class="dbm-x-btn" hidden title="Limpiar">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
+      <div class="dbm-search-results" id="dbm-search-results" hidden role="listbox"></div>
     </div>
 
     <div class="dbm-toggles">
@@ -124,5 +125,5 @@
   </aside>
 </div>
 
-<script src="/assets/dbmap/js/db_map.js?v=7"></script>
+<script src="/assets/dbmap/js/db_map.js?v=9"></script>
 {% endblock %}

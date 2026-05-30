@@ -70,7 +70,52 @@ _MAX_FIELDS_PREVIEW = 12  # campos Link/Table que metemos en cada nodo del ERD.
 
 
 @frappe.whitelist(methods=["GET", "POST"], allow_guest=False)
-def get_schema_graph(module: str = "", search: str = "",
+def list_doctypes(search: str = "", module: str = "", limit: int = 30):
+	"""Lista plana de DocTypes para el autocomplete del buscador.
+
+	Devuelve hasta `limit` resultados ordenados por relevancia (exact match
+	primero, luego startswith, luego contains). Cada item trae el conteo de
+	relaciones para que el frontend muestre un badge.
+	"""
+	_require_login()
+	search = (search or "").strip().lower()
+	module = (module or "").strip()
+	limit = max(1, min(int(limit or 30), 100))
+
+	doctypes = _fetch_doctypes()
+	link_counts = {}
+	for f in _fetch_doc_fields():
+		link_counts[f["parent"]] = link_counts.get(f["parent"], 0) + 1
+
+	def score(name):
+		nlow = name.lower()
+		if nlow == search: return 0
+		if nlow.startswith(search): return 1
+		return 2
+
+	results = []
+	for name, meta in doctypes.items():
+		if module and meta.get("module") != module:
+			continue
+		if search and search not in name.lower():
+			continue
+		results.append({
+			"name": name,
+			"module": meta.get("module") or "",
+			"istable": int(meta.get("istable") or 0),
+			"custom": int(meta.get("custom") or 0),
+			"linkCount": link_counts.get(name, 0),
+			"_score": score(name) if search else 99,
+		})
+
+	results.sort(key=lambda r: (r["_score"], r["name"].lower()))
+	for r in results:
+		r.pop("_score", None)
+	return {"results": results[:limit], "total": len(results)}
+
+
+@frappe.whitelist(methods=["GET", "POST"], allow_guest=False)
+def get_schema_graph(module: str = "", search: str = "", doctype: str = "",
 					 include_aux: int = 0, expand_neighbors: int = 0):
 	"""Devuelve el grafo (estilo ERD) del schema del site.
 
@@ -131,7 +176,25 @@ def get_schema_graph(module: str = "", search: str = "",
 
 	module = (module or "").strip()
 	search = (search or "").strip().lower()
-	if module or search:
+	doctype = (doctype or "").strip()
+
+	# Caso "focused": el user pidió UN doctype puntual. Auto-activamos vecinos
+	# y NO aplicamos el filtro de aux (queremos ver child tables relevantes).
+	if doctype:
+		if doctype not in doctypes:
+			frappe.throw(f"DocType '{doctype}' no existe")
+		seed = {doctype}
+		expanded = set(seed)
+		for e in edges:
+			if e["source"] in seed and e["target"] in doctypes:
+				expanded.add(e["target"])
+			if e["target"] in seed:
+				expanded.add(e["source"])
+		visible = expanded
+		# El modo focused ignora include_aux=0: child tables relacionadas SÍ
+		# se muestran porque son parte del modelo del doctype focused.
+		include_aux = 1
+	elif module or search:
 		seed = set()
 		for name, meta in doctypes.items():
 			if module and meta.get("module") == module:

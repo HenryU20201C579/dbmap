@@ -33,6 +33,7 @@
     const els = {
         search: $("dbm-search"),
         searchClear: $("dbm-search-clear"),
+        searchResults: $("dbm-search-results"),
         toggleAux: $("dbm-toggle-aux"),
         toggleNeighbors: $("dbm-toggle-neighbors"),
         modules: $("dbm-modules"),
@@ -156,16 +157,31 @@
     }
 
     async function activateSearch(term) {
+        // Mantengo esta función por compatibilidad con bindings antiguos, pero
+        // ahora el flujo principal es: search input → dropdown autocomplete →
+        // activateDoctype al elegir uno. activateSearch dibuja TODOS los matches
+        // (cuando el user presiona Enter sin elegir del dropdown).
         state.searchTerm = term.trim();
         if (!state.searchTerm) {
-            // Volver al módulo si había uno.
             if (state.activeModule) activateModule(state.activeModule);
             else showEmpty(true);
             return;
         }
         state.activeModule = null;
         highlightActiveModule();
+        hideSearchResults();
         await loadGraph({ search: state.searchTerm });
+    }
+
+    async function activateDoctype(name) {
+        // Modo focused: dibuja UN doctype + vecinos directos (1-hop forzado).
+        state.activeModule = null;
+        state.searchTerm = "";
+        highlightActiveModule();
+        hideSearchResults();
+        els.search.value = name;
+        els.searchClear.hidden = false;
+        await loadGraph({ doctype: name });
     }
 
     async function loadGraph(filter) {
@@ -177,10 +193,11 @@
         };
         if (filter.module) params.module = filter.module;
         if (filter.search) params.search = filter.search;
+        if (filter.doctype) params.doctype = filter.doctype;
 
         try {
             const data = await apiCall("dbmap.api.get_schema_graph", params);
-            renderGraph(data);
+            renderGraph(data, filter.doctype || null);
             updateCrumbs(filter, data);
         } catch (e) {
             console.error("[dbmap] loadGraph fallo", e);
@@ -192,7 +209,13 @@
 
     function updateCrumbs(filter, data) {
         const parts = [];
-        if (filter.module) {
+        if (filter.doctype) {
+            parts.push(`<span class="dbm-crumb">DocType</span>`);
+            parts.push(`<span class="dbm-crumb-sep">/</span>`);
+            parts.push(`<span class="dbm-crumb is-active">${escapeHtml(filter.doctype)}</span>`);
+            parts.push(`<span class="dbm-crumb-sep">·</span>`);
+            parts.push(`<span class="dbm-crumb">+ vecinos directos</span>`);
+        } else if (filter.module) {
             parts.push(`<span class="dbm-crumb">Módulo</span>`);
             parts.push(`<span class="dbm-crumb-sep">/</span>`);
             parts.push(`<span class="dbm-crumb is-active">${escapeHtml(filter.module)}</span>`);
@@ -204,6 +227,82 @@
         parts.push(`<span class="dbm-crumb-sep">·</span>`);
         parts.push(`<span class="dbm-crumb">${data.shown_doctypes} nodos · ${data.edges.length} relaciones</span>`);
         els.crumbs.innerHTML = parts.join("");
+    }
+
+    // ───── Autocomplete del buscador ─────
+    let _searchAbort = null;
+    let _searchActiveIdx = -1;
+    async function fetchSearchResults(term) {
+        const t = (term || "").trim();
+        if (!t || t.length < 1) {
+            hideSearchResults();
+            return;
+        }
+        if (_searchAbort) _searchAbort.abort();
+        _searchAbort = new AbortController();
+        try {
+            const data = await apiCall("dbmap.api.list_doctypes", { search: t, limit: 30 });
+            renderSearchResults(data, t);
+        } catch (e) {
+            if (e.name === "AbortError") return;
+            console.warn("[dbmap] search fallo", e);
+        }
+    }
+    function renderSearchResults(data, term) {
+        els.searchResults.innerHTML = "";
+        const items = data.results || [];
+        if (!items.length) {
+            els.searchResults.innerHTML = `<div class="dbm-sr-empty">Sin resultados para "${escapeHtml(term)}"</div>`;
+        } else {
+            items.forEach((it, idx) => {
+                const div = document.createElement("div");
+                div.className = "dbm-sr-item";
+                div.setAttribute("role", "option");
+                div.dataset.name = it.name;
+                div.innerHTML = `
+                    <span class="dbm-sr-name">${highlightMatch(it.name, term)}</span>
+                    <span class="dbm-sr-mod">${escapeHtml(it.module || "—")}</span>
+                    <span class="dbm-sr-count" title="campos de relación">${it.linkCount}</span>
+                `;
+                div.addEventListener("click", () => activateDoctype(it.name));
+                els.searchResults.appendChild(div);
+            });
+            if (data.total > items.length) {
+                const more = document.createElement("div");
+                more.className = "dbm-sr-more";
+                more.textContent = `Mostrando ${items.length} de ${data.total} — refina la búsqueda`;
+                els.searchResults.appendChild(more);
+            }
+        }
+        els.searchResults.hidden = false;
+        _searchActiveIdx = -1;
+    }
+    function hideSearchResults() {
+        els.searchResults.hidden = true;
+        els.searchResults.innerHTML = "";
+        _searchActiveIdx = -1;
+    }
+    function highlightMatch(name, term) {
+        const t = (term || "").trim();
+        if (!t) return escapeHtml(name);
+        const lower = name.toLowerCase();
+        const idx = lower.indexOf(t.toLowerCase());
+        if (idx < 0) return escapeHtml(name);
+        return escapeHtml(name.slice(0, idx))
+            + "<b>" + escapeHtml(name.slice(idx, idx + t.length)) + "</b>"
+            + escapeHtml(name.slice(idx + t.length));
+    }
+    function moveSearchSelection(delta) {
+        const items = els.searchResults.querySelectorAll(".dbm-sr-item");
+        if (!items.length) return;
+        _searchActiveIdx = Math.max(0, Math.min(items.length - 1, _searchActiveIdx + delta));
+        items.forEach((it, i) => it.classList.toggle("is-active", i === _searchActiveIdx));
+        items[_searchActiveIdx].scrollIntoView({ block: "nearest" });
+    }
+    function commitSearchSelection() {
+        const items = els.searchResults.querySelectorAll(".dbm-sr-item");
+        const target = _searchActiveIdx >= 0 ? items[_searchActiveIdx] : items[0];
+        if (target) activateDoctype(target.dataset.name);
     }
 
     // ───── Cytoscape (ERD style) ─────
@@ -230,7 +329,7 @@
         return lines.join("\n");
     }
 
-    function renderGraph(data) {
+    function renderGraph(data, focusedId) {
         if (state.cy) {
             try { state.cy.destroy(); } catch (_) {}
             state.cy = null;
@@ -257,6 +356,7 @@
                 n.custom ? "n-custom" : "",
                 n.placeholder ? "n-placeholder" : "",
                 (!n.fields_summary || !n.fields_summary.length) ? "n-empty" : "",
+                focusedId && n.id === focusedId ? "n-focused" : "",
             ].filter(Boolean).join(" "),
         }));
 
@@ -282,9 +382,24 @@
             container: els.canvas,
             elements: { nodes: cyNodes, edges: cyEdges },
             wheelSensitivity: 0.2,
+            minZoom: 0.15,
+            maxZoom: 3,
             style: cyStyles(),
             layout: pickLayout(cyNodes.length),
         });
+
+        // En modo focused: después del layout, centrar zoom 0.9 en el doctype
+        // pedido en vez del fit:true que miniaturiza con 90+ nodos.
+        if (focusedId) {
+            state.cy.ready(() => {
+                const focusNode = state.cy.getElementById(focusedId);
+                if (focusNode && !focusNode.empty()) {
+                    state.cy.zoom(0.9);
+                    state.cy.center(focusNode);
+                    focusNode.select();
+                }
+            });
+        }
 
         state.cy.on("tap", "node", (evt) => {
             const id = evt.target.data("id");
@@ -404,6 +519,18 @@
                     "border-color": "#6ee7b7",
                     "border-width": 2.5,
                     "background-color": "#1a2520",
+                },
+            },
+            {
+                // Nodo focused (el doctype que el user pidió ver puntual).
+                // Borde verde grueso y fondo distinto para ubicarlo de un vistazo.
+                selector: "node.n-focused",
+                style: {
+                    "border-color": "#6ee7b7",
+                    "border-width": 3,
+                    "background-color": "#15251f",
+                    "color": "#a7f3d0",
+                    "font-size": 11,
                 },
             },
             {
@@ -592,12 +719,31 @@
             clearTimeout(searchTimer);
             const v = els.search.value;
             els.searchClear.hidden = !v;
-            searchTimer = setTimeout(() => activateSearch(v), 280);
+            if (!v) { hideSearchResults(); return; }
+            searchTimer = setTimeout(() => fetchSearchResults(v), 180);
+        });
+        els.search.addEventListener("focus", () => {
+            if (els.search.value) fetchSearchResults(els.search.value);
+        });
+        els.search.addEventListener("keydown", (e) => {
+            if (els.searchResults.hidden) return;
+            if (e.key === "ArrowDown") { e.preventDefault(); moveSearchSelection(1); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); moveSearchSelection(-1); }
+            else if (e.key === "Enter") { e.preventDefault(); commitSearchSelection(); }
+            else if (e.key === "Escape") { e.preventDefault(); hideSearchResults(); }
+        });
+        document.addEventListener("click", (e) => {
+            if (!els.searchResults.hidden && !e.target.closest(".dbm-search-row")) {
+                hideSearchResults();
+            }
         });
         els.searchClear.addEventListener("click", () => {
             els.search.value = "";
             els.searchClear.hidden = true;
-            activateSearch("");
+            hideSearchResults();
+            // Si había un módulo activo, re-actívalo para volver al estado previo.
+            if (state.activeModule) activateModule(state.activeModule);
+            else showEmpty(true);
         });
         els.toggleAux.addEventListener("change", () => {
             sessionStorage.setItem(SS.AUX, els.toggleAux.checked ? "1" : "0");
@@ -653,6 +799,7 @@
         openDoctype: openDetail,
         activateModule,
         activateSearch,
+        activateDoctype,
         close: closeDetail,
     };
 })();
