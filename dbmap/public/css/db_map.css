@@ -470,6 +470,125 @@ html, body {
 .dbm-modal-pane { display: none; }
 .dbm-modal-pane.is-active { display: block; }
 
+/* ───── Vista formulario (estilo Frappe form) ───── */
+/* Imita el form nativo del Desk: pestañas internas del DocType (Tab Break)
+ * + secciones (Section Break) + columnas (Column Break) + campos label/input. */
+.dbm-form-root { display: flex; flex-direction: column; gap: 0; }
+
+.dbm-form-tabs {
+    display: flex; gap: 0;
+    border-bottom: 1px solid var(--dbm-border-soft);
+    overflow-x: auto;
+    margin-bottom: 4px;
+}
+.dbm-form-tabs::-webkit-scrollbar { height: 4px; }
+.dbm-form-tab {
+    background: transparent; border: 0; border-bottom: 2px solid transparent;
+    padding: 9px 14px; cursor: pointer; color: var(--dbm-text-2);
+    font-size: 12px; font-weight: 500;
+    white-space: nowrap;
+    transition: color .12s, border-color .12s;
+}
+.dbm-form-tab:hover { color: var(--dbm-text); }
+.dbm-form-tab.is-active { color: var(--dbm-accent); border-bottom-color: var(--dbm-accent); }
+
+.dbm-form-section {
+    padding: 16px 0 8px;
+    border-top: 1px dashed var(--dbm-border-soft);
+}
+.dbm-form-section:first-child { border-top: 0; padding-top: 8px; }
+.dbm-form-section-title {
+    margin: 0 0 14px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dbm-text-3); font-weight: 600;
+}
+
+.dbm-form-cols {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 28px;
+}
+.dbm-form-cols.cols-3 { grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+.dbm-form-cols.cols-1 { grid-template-columns: 1fr; }
+.dbm-form-col { display: flex; flex-direction: column; gap: 14px; }
+
+.dbm-form-field {
+    display: flex; flex-direction: column; gap: 4px;
+}
+.dbm-form-label {
+    font-size: 11.5px; color: var(--dbm-text-2);
+    font-weight: 500;
+    display: flex; align-items: center; gap: 4px;
+}
+.dbm-form-label .dbm-form-fname {
+    font-family: 'Geist Mono', ui-monospace, monospace;
+    font-size: 9.5px;
+    color: var(--dbm-text-3);
+    margin-left: auto;
+}
+.dbm-form-req { color: var(--dbm-danger); font-size: 11px; }
+
+.dbm-form-input {
+    width: 100%;
+    background: var(--dbm-surface-2);
+    border: 1px solid var(--dbm-border);
+    color: var(--dbm-text); font-size: 12.5px;
+    padding: 7px 10px; border-radius: var(--dbm-radius-sm);
+    outline: none;
+    box-sizing: border-box;
+    font-family: inherit;
+    transition: border-color .12s, background .12s;
+}
+.dbm-form-input.is-empty { color: var(--dbm-text-3); }
+textarea.dbm-form-input { resize: vertical; min-height: 60px; max-height: 200px; }
+.dbm-form-input.is-link {
+    color: var(--dbm-link); cursor: pointer;
+    background: var(--dbm-link-bg);
+    border-color: rgba(96,165,250,.25);
+}
+.dbm-form-input.is-link:hover { background: rgba(96,165,250,.2); border-color: var(--dbm-link); }
+.dbm-form-input.is-table {
+    color: var(--dbm-table); cursor: pointer;
+    background: var(--dbm-table-bg);
+    border-color: rgba(192,132,252,.25);
+}
+.dbm-form-input.is-table:hover { background: rgba(192,132,252,.2); border-color: var(--dbm-table); }
+.dbm-form-input.is-dynamic {
+    color: var(--dbm-dynamic);
+    background: rgba(251,191,36,.08);
+    border-color: rgba(251,191,36,.25);
+    font-style: italic;
+}
+
+.dbm-form-check {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; font-size: 12.5px;
+    color: var(--dbm-text);
+    cursor: default;
+}
+.dbm-check-box {
+    width: 16px; height: 16px;
+    background: var(--dbm-surface-2);
+    border: 1px solid var(--dbm-border);
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.dbm-form-help {
+    font-size: 10.5px; color: var(--dbm-text-3);
+    margin-top: 2px;
+    line-height: 1.45;
+    font-style: italic;
+}
+
+.dbm-form-html {
+    padding: 6px 8px;
+    color: var(--dbm-text-3);
+    font-size: 11px;
+    font-style: italic;
+    background: rgba(255,255,255,.02);
+    border-left: 2px solid var(--dbm-border);
+    border-radius: 2px;
+}
+
 /* Grid responsive de cards de campo. */
 .dbm-modal-grid {
     display: grid;
@@ -605,4 +724,5 @@ html, body {
     .dbm-modal-tabs { padding: 0 8px; overflow-x: auto; }
     .dbm-tab { padding: 10px 10px; font-size: 12px; }
     .dbm-modal-foot { padding: 12px 16px; flex-wrap: wrap; }
+    .dbm-form-cols, .dbm-form-cols.cols-3 { grid-template-columns: 1fr; gap: 14px; }
 }

@@ -56,12 +56,11 @@
         modalDesk: $("dbm-modal-desk"),
         modalFocus: $("dbm-modal-focus"),
         modalErd: $("dbm-modal-erd"),
+        paneForm: $("dbm-pane-form"),
         paneOut: $("dbm-pane-outgoing"),
         paneIn: $("dbm-pane-incoming"),
-        paneAll: $("dbm-pane-all"),
         tabCountOut: $("dbm-tab-count-out"),
         tabCountIn: $("dbm-tab-count-in"),
-        tabCountAll: $("dbm-tab-count-all"),
     };
 
     const state = {
@@ -584,16 +583,16 @@
     // ───── Modal de detalle del DocType ─────
     async function openDetail(name) {
         state.currentDoctype = name;
+        state.activeFormTab = 0;
         els.modalBackdrop.hidden = false;
         els.modalName.textContent = name;
         els.modalPills.innerHTML = '<span class="dbm-pill dbm-pill-dim">cargando…</span>';
+        els.paneForm.innerHTML = '<div style="padding:24px;color:var(--dbm-text-3);font-size:12px;text-align:center">Cargando…</div>';
         els.paneOut.innerHTML = "";
         els.paneIn.innerHTML = "";
-        els.paneAll.innerHTML = "";
         els.tabCountOut.textContent = "0";
         els.tabCountIn.textContent = "0";
-        els.tabCountAll.textContent = "0";
-        switchTab("outgoing");
+        switchTab("form");
         document.body.style.overflow = "hidden";
 
         try {
@@ -621,6 +620,11 @@
         if (dt.autoname) pills.push(`<span class="dbm-pill" title="autoname">naming: ${escapeHtml(dt.autoname)}</span>`);
         els.modalPills.innerHTML = pills.join("");
 
+        // Vista formulario (estilo Frappe Desk): tabs/secciones/columnas reales del DocType.
+        state.formStructure = buildFormStructure(data.fields || []);
+        state.activeFormTab = 0;
+        renderFormView();
+
         // Outgoing (campos Link/Table del DocType).
         const outFields = (data.fields || []).filter(f =>
             ["Link", "Table", "Table MultiSelect", "Dynamic Link"].includes(f.fieldtype)
@@ -634,13 +638,143 @@
         (data.incoming || []).forEach(inc => els.paneIn.appendChild(renderRelCard(inc, "incoming")));
         els.tabCountIn.textContent = (data.incoming || []).length;
 
-        // Todos los campos (no solo relacionales).
-        els.paneAll.innerHTML = "";
-        (data.fields || []).forEach(f => els.paneAll.appendChild(renderFieldCard(f)));
-        els.tabCountAll.textContent = (data.fields || []).length;
-
         els.modalDesk.href = `/app/${slugifyDoctype(state.currentDoctype)}`;
     }
+
+    // Parsear DocFields a estructura tabs/sections/columns/fields respetando
+    // los Tab Break / Section Break / Column Break del propio DocType.
+    function buildFormStructure(fields) {
+        const tabs = [{ tabName: "Detalles", sections: [{ title: "", columns: [[]] }] }];
+        for (const f of fields) {
+            const lastTab = tabs[tabs.length - 1];
+            const lastSection = lastTab.sections[lastTab.sections.length - 1];
+            const lastCol = lastSection.columns[lastSection.columns.length - 1];
+
+            if (f.fieldtype === "Tab Break") {
+                tabs.push({
+                    tabName: f.label || f.fieldname || "Tab",
+                    sections: [{ title: "", columns: [[]] }],
+                });
+            } else if (f.fieldtype === "Section Break") {
+                lastTab.sections.push({ title: f.label || "", columns: [[]] });
+            } else if (f.fieldtype === "Column Break") {
+                lastSection.columns.push([]);
+            } else {
+                lastCol.push(f);
+            }
+        }
+        // Limpiar secciones / columnas vacías.
+        for (const t of tabs) {
+            t.sections = t.sections.filter(s => s.columns.some(c => c.length > 0));
+            for (const s of t.sections) s.columns = s.columns.filter(c => c.length > 0);
+        }
+        // Si la primera tab quedó vacía pero hay otras, drop.
+        if (tabs.length > 1 && !tabs[0].sections.length) tabs.shift();
+        return tabs;
+    }
+
+    function renderFormView() {
+        const tabs = state.formStructure || [];
+        if (!tabs.length) {
+            els.paneForm.innerHTML = '<div style="padding:24px;color:var(--dbm-text-3);font-size:12px">Este DocType no tiene campos para mostrar.</div>';
+            return;
+        }
+        const activeIdx = Math.min(state.activeFormTab || 0, tabs.length - 1);
+        const tabBar = tabs.length > 1
+            ? `<div class="dbm-form-tabs">${tabs.map((t, i) =>
+                `<button type="button" class="dbm-form-tab ${i === activeIdx ? "is-active" : ""}" data-formtab="${i}">${escapeHtml(t.tabName)}</button>`
+            ).join("")}</div>`
+            : "";
+        const tab = tabs[activeIdx];
+        const sectionsHtml = tab.sections.map(renderFormSection).join("");
+        els.paneForm.innerHTML = tabBar + `<div class="dbm-form-content">${sectionsHtml}</div>`;
+        // Wire clicks de las tabs internas.
+        els.paneForm.querySelectorAll(".dbm-form-tab").forEach(btn => {
+            btn.addEventListener("click", () => {
+                state.activeFormTab = parseInt(btn.dataset.formtab, 10) || 0;
+                renderFormView();
+            });
+        });
+        // Wire clicks de los campos Link / Table para navegar.
+        els.paneForm.querySelectorAll("[data-navigate]").forEach(el => {
+            el.addEventListener("click", () => openDetail(el.dataset.navigate));
+        });
+    }
+
+    function renderFormSection(s) {
+        const colCount = s.columns.length;
+        const colsClass = colCount >= 3 ? "cols-3" : colCount === 1 ? "cols-1" : "";
+        const cols = s.columns.map(col =>
+            `<div class="dbm-form-col">${col.map(renderFormField).join("")}</div>`
+        ).join("");
+        return `
+            <div class="dbm-form-section">
+                ${s.title ? `<h3 class="dbm-form-section-title">${escapeHtml(s.title)}</h3>` : ""}
+                <div class="dbm-form-cols ${colsClass}">${cols}</div>
+            </div>
+        `;
+    }
+
+    function renderFormField(f) {
+        const ft = f.fieldtype || "Data";
+        const label = f.label || f.fieldname || "—";
+        const fname = f.fieldname || "";
+        const reqd = f.reqd ? `<span class="dbm-form-req">*</span>` : "";
+        const help = f.description ? `<div class="dbm-form-help">${escapeHtml(f.description)}</div>` : "";
+
+        // Caso Check: layout horizontal sin label arriba (label inline a la derecha).
+        if (ft === "Check") {
+            return `
+                <div class="dbm-form-field">
+                    <div class="dbm-form-check">
+                        <span class="dbm-check-box"></span>
+                        <span>${escapeHtml(label)}</span>
+                    </div>
+                    ${help}
+                </div>`;
+        }
+
+        // Caso HTML / Heading: bloque informativo sin input.
+        if (ft === "HTML" || ft === "Heading") {
+            return `
+                <div class="dbm-form-field">
+                    <div class="dbm-form-html">${escapeHtml(label)} <em>(${escapeHtml(ft)})</em></div>
+                </div>`;
+        }
+
+        // Resto: label arriba + "input" visual según tipo.
+        let body = "";
+        if (ft === "Link") {
+            const target = (f.options || "").trim();
+            body = `<div class="dbm-form-input is-link" data-navigate="${escapeAttr(target)}" title="Click para abrir ${escapeAttr(target)}">→ ${escapeHtml(target || "—")}</div>`;
+        } else if (ft === "Table" || ft === "Table MultiSelect") {
+            const target = (f.options || "").trim();
+            body = `<div class="dbm-form-input is-table" data-navigate="${escapeAttr(target)}" title="Tabla hija — click para abrir ${escapeAttr(target)}">≡ ${escapeHtml(target || "—")} <small style="opacity:.6">(${escapeHtml(ft)})</small></div>`;
+        } else if (ft === "Dynamic Link") {
+            body = `<div class="dbm-form-input is-dynamic" title="DocType destino determinado por el campo '${escapeAttr(f.options || "")}'">→ (dinámico via ${escapeHtml(f.options || "—")})</div>`;
+        } else if (ft === "Select") {
+            const opts = (f.options || "").split("\n").filter(Boolean);
+            body = `<div class="dbm-form-input is-empty">${opts.length ? escapeHtml(opts[0]) + (opts.length > 1 ? ` <small style="opacity:.5">(+${opts.length - 1} opciones)</small>` : "") : "(sin opciones)"}</div>`;
+        } else if (ft === "Long Text" || ft === "Text" || ft === "Small Text" || ft === "Text Editor" || ft === "Code" || ft === "Markdown Editor" || ft === "JSON") {
+            body = `<textarea class="dbm-form-input is-empty" disabled rows="3" placeholder="${escapeAttr(ft)}"></textarea>`;
+        } else {
+            body = `<div class="dbm-form-input is-empty">${escapeHtml(ft)}</div>`;
+        }
+
+        return `
+            <div class="dbm-form-field">
+                <label class="dbm-form-label">
+                    <span>${escapeHtml(label)}</span>
+                    ${reqd}
+                    <span class="dbm-form-fname">${escapeHtml(fname)}</span>
+                </label>
+                ${body}
+                ${help}
+            </div>
+        `;
+    }
+
+    function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
 
     function renderRelCard(rel, kind) {
         const card = document.createElement("div");
