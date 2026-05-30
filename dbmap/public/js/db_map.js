@@ -20,6 +20,11 @@
         console.error("[dbmap] Cytoscape no cargó");
         return;
     }
+    // Registrar dagre layout si está disponible (CDN). Sin dagre caemos a `cose`,
+    // pero con dagre los grafos quedan jerárquicos LR que es lo que un ERD necesita.
+    if (window.cytoscapeDagre) {
+        try { cytoscape.use(window.cytoscapeDagre); } catch (_) {}
+    }
 
     const $ = (id) => document.getElementById(id);
     const ROOT = document.querySelector(".dbm-root");
@@ -29,6 +34,7 @@
         search: $("dbm-search"),
         searchClear: $("dbm-search-clear"),
         toggleAux: $("dbm-toggle-aux"),
+        toggleNeighbors: $("dbm-toggle-neighbors"),
         modules: $("dbm-modules"),
         modulesCount: $("dbm-modules-count"),
         crumbs: $("dbm-crumbs"),
@@ -65,6 +71,7 @@
     const SS = {
         MOD: "dbm-active-module",
         AUX: "dbm-include-aux",
+        NEI: "dbm-expand-neighbors",
     };
 
     // GET en vez de POST: endpoint es read-only, evita la dependencia del CSRF
@@ -104,9 +111,9 @@
             } else {
                 showEmpty(true);
             }
-            // Restaurar toggle de aux.
-            const aux = sessionStorage.getItem(SS.AUX);
-            if (aux === "0") els.toggleAux.checked = false;
+            // Restaurar toggles.
+            if (sessionStorage.getItem(SS.AUX) === "1") els.toggleAux.checked = true;
+            if (sessionStorage.getItem(SS.NEI) === "1") els.toggleNeighbors.checked = true;
         } catch (e) {
             console.error("[dbmap] bootstrap fallo", e);
             els.modules.innerHTML = '<div class="dbm-modules-loading" style="color:var(--dbm-danger)">Error al cargar módulos</div>';
@@ -166,6 +173,7 @@
         showEmpty(false);
         const params = {
             include_aux: els.toggleAux.checked ? 1 : 0,
+            expand_neighbors: els.toggleNeighbors.checked ? 1 : 0,
         };
         if (filter.module) params.module = filter.module;
         if (filter.search) params.search = filter.search;
@@ -198,7 +206,30 @@
         els.crumbs.innerHTML = parts.join("");
     }
 
-    // ───── Cytoscape ─────
+    // ───── Cytoscape (ERD style) ─────
+    function buildErdLabel(n) {
+        // Construye el label multilínea del nodo ERD:
+        //   ┌─ DocType ─┐
+        //   │ field1 → Target│
+        //   │ field2 → Target│
+        // Cytoscape renderiza con text-wrap:wrap y monospace para alinear.
+        const header = n.label;
+        if (n.placeholder) return header;
+        if (!n.fields_summary || !n.fields_summary.length) return header;
+        const lines = [header, "─".repeat(Math.max(header.length, 14))];
+        n.fields_summary.forEach(f => {
+            const tgt = f.target ? "→ " + f.target : "";
+            // Truncar fieldname y target para mantener ancho parejo.
+            const fname = (f.fieldname || "").slice(0, 22);
+            const target = tgt.slice(0, 28);
+            lines.push(`${fname.padEnd(22, " ")} ${target}`);
+        });
+        if (n.more_fields > 0) {
+            lines.push(`+${n.more_fields} más...`);
+        }
+        return lines.join("\n");
+    }
+
     function renderGraph(data) {
         if (state.cy) {
             try { state.cy.destroy(); } catch (_) {}
@@ -210,6 +241,7 @@
             data: {
                 id: n.id,
                 label: n.label,
+                erdLabel: buildErdLabel(n),
                 module: n.module,
                 istable: n.istable,
                 issingle: n.issingle,
@@ -217,12 +249,14 @@
                 placeholder: n.placeholder || 0,
                 fieldCount: n.fieldCount,
                 linkCount: n.linkCount,
+                more: n.more_fields || 0,
             },
             classes: [
                 n.istable ? "n-table" : "",
                 n.issingle ? "n-single" : "",
                 n.custom ? "n-custom" : "",
                 n.placeholder ? "n-placeholder" : "",
+                (!n.fields_summary || !n.fields_summary.length) ? "n-empty" : "",
             ].filter(Boolean).join(" "),
         }));
 
@@ -276,50 +310,73 @@
     }
 
     function pickLayout(nodeCount) {
-        // Layout `cose` viene built-in con cytoscape — sin dependencias externas.
-        // Parametros ajustados para que ~50 nodos no queden encimados.
+        // Si dagre está registrado, usamos layout jerárquico LR (estilo ERD).
+        // Si no, fallback a `cose` (force-directed, peor para ERD pero funciona).
+        const hasDagre = cytoscape("layout", "dagre");
+        if (hasDagre) {
+            return {
+                name: "dagre",
+                rankDir: "LR",         // izquierda → derecha
+                nodeSep: 30,           // separación entre nodos del mismo rank
+                rankSep: 90,           // separación entre ranks
+                edgeSep: 12,
+                animate: false,
+                fit: true,
+                padding: 40,
+            };
+        }
         return {
             name: "cose",
-            animate: false,
-            fit: true,
-            padding: 30,
+            animate: false, fit: true, padding: 30,
             nodeRepulsion: () => 80000,
             idealEdgeLength: () => (nodeCount > 40 ? 130 : 90),
             edgeElasticity: () => 32,
-            gravity: 0.4,
-            numIter: 1500,
-            componentSpacing: 60,
-            nestingFactor: 1.2,
+            gravity: 0.4, numIter: 1500,
         };
     }
 
     function cyStyles() {
         return [
             {
+                // Nodo ERD: rectángulo grande con label multilínea (header + campos).
+                // Monospace para que las "→" se alineen verticalmente.
                 selector: "node",
                 style: {
-                    "background-color": "#1c1c24",
+                    "background-color": "#14141a",
                     "border-color": "#3a3a48",
                     "border-width": 1.5,
-                    "label": "data(label)",
-                    "font-size": 11,
-                    "font-family": "Geist, sans-serif",
+                    "label": "data(erdLabel)",
+                    "font-size": 10,
+                    "font-family": "Geist Mono, ui-monospace, Menlo, monospace",
                     "color": "#e6e6ed",
                     "text-valign": "center",
                     "text-halign": "center",
-                    "text-wrap": "ellipsis",
-                    "text-max-width": "120px",
-                    "padding": "10px",
+                    "text-wrap": "wrap",
+                    "text-max-width": "280px",
+                    "text-justification": "left",
+                    "padding": "12px",
                     "width": "label",
                     "height": "label",
                     "shape": "round-rectangle",
+                    "line-height": 1.35,
                     "transition-property": "background-color, border-color, opacity",
                     "transition-duration": "150ms",
                 },
             },
             {
+                // Nodo sin campos (DocType "hoja"): más compacto, solo el nombre.
+                selector: "node.n-empty",
+                style: {
+                    "font-family": "Geist, sans-serif",
+                    "font-size": 12,
+                    "padding": "10px",
+                    "text-max-width": "160px",
+                    "background-color": "#1c1c24",
+                },
+            },
+            {
                 selector: "node.n-table",
-                style: { "border-color": "#c084fc", "background-color": "#1d1820" },
+                style: { "border-color": "#c084fc", "background-color": "#1a141f" },
             },
             {
                 selector: "node.n-single",
@@ -337,6 +394,8 @@
                     "border-style": "dashed",
                     "color": "#fbbf24",
                     "font-style": "italic",
+                    "font-family": "Geist, sans-serif",
+                    "font-size": 11,
                 },
             },
             {
@@ -344,7 +403,7 @@
                 style: {
                     "border-color": "#6ee7b7",
                     "border-width": 2.5,
-                    "background-color": "#1f2a25",
+                    "background-color": "#1a2520",
                 },
             },
             {
@@ -509,7 +568,8 @@
     function showLoading(on) {
         els.loading.hidden = !on;
         if (on) els.empty.style.display = "none";
-        else els.empty.style.display = "";
+        // Al apagar loading: solo restauramos empty si NO hay grafo dibujado.
+        else if (!state.cy) els.empty.style.display = "";
     }
     function showEmpty(on) {
         els.empty.style.display = on ? "" : "none";
@@ -541,6 +601,11 @@
         });
         els.toggleAux.addEventListener("change", () => {
             sessionStorage.setItem(SS.AUX, els.toggleAux.checked ? "1" : "0");
+            if (state.activeModule) activateModule(state.activeModule);
+            else if (state.searchTerm) activateSearch(state.searchTerm);
+        });
+        els.toggleNeighbors.addEventListener("change", () => {
+            sessionStorage.setItem(SS.NEI, els.toggleNeighbors.checked ? "1" : "0");
             if (state.activeModule) activateModule(state.activeModule);
             else if (state.searchTerm) activateSearch(state.searchTerm);
         });

@@ -66,41 +66,39 @@ def _fetch_doc_fields():
 	return standard + custom
 
 
+_MAX_FIELDS_PREVIEW = 12  # campos Link/Table que metemos en cada nodo del ERD.
+
+
 @frappe.whitelist(methods=["GET", "POST"], allow_guest=False)
-def get_schema_graph(module: str = "", search: str = "", include_aux: int = 1):
-	"""Devuelve el grafo completo (o filtrado) del schema del site.
+def get_schema_graph(module: str = "", search: str = "",
+					 include_aux: int = 0, expand_neighbors: int = 0):
+	"""Devuelve el grafo (estilo ERD) del schema del site.
 
 	Parámetros:
-	- module: si se pasa, devuelve solo los DocTypes de ese módulo + sus
-	  vecinos directos (1 hop). Vacío = todos.
-	- search: filtra por nombre exacto/parcial (case-insensitive). Si hay match
-	  devuelve el nodo + vecinos directos.
-	- include_aux: si es 0, oculta DocTypes auxiliares (istable=1, child tables).
-	  Útil para ver solo el "flujo de negocio" sin ruido técnico.
+	- module: filtra a los DocTypes de ese módulo. Vacío = todos.
+	- search: filtra por nombre parcial (case-insensitive).
+	- include_aux: si 0 (default), oculta child tables. Reduce ruido brutalmente.
+	- expand_neighbors: si 1, agrega vecinos a 1 hop (DocTypes referenciados desde
+	  o hacia el seed). Default 0 para no caer en el hairball de antes.
 
-	Devuelve:
-	{
-		"nodes": [{id, label, module, custom, istable, issingle, fieldCount, linkCount}],
-		"edges": [{id, source, target, label, type, custom}],
-		"modules": ["Selling", "Stock", ...]  # solo en respuesta sin filtros
-	}
+	Cada nodo trae `fields_summary`: lista de hasta 12 campos Link/Table con su
+	destino — el frontend los renderiza dentro del rectángulo del ERD.
+
+	Devuelve {nodes, edges, modules, total_doctypes, shown_doctypes}.
 	"""
 	_require_login()
 	include_aux = int(include_aux or 0)
+	expand_neighbors = int(expand_neighbors or 0)
 	doctypes = _fetch_doctypes()
 	fields = _fetch_doc_fields()
 
-	# Pre-calcular cuántos campos y cuántos links tiene cada doctype.
-	field_count = {}
-	link_count = {}
+	# Indexamos los fields por parent para poder armar fields_summary por nodo
+	# sin recorrer todo cada vez.
+	fields_by_parent = {}
 	for f in fields:
-		field_count[f["parent"]] = field_count.get(f["parent"], 0) + 1
-		link_count[f["parent"]] = link_count.get(f["parent"], 0) + 1
+		fields_by_parent.setdefault(f["parent"], []).append(f)
 
-	# Construir aristas primero. Para Link/Table/Table MultiSelect, options es
-	# el nombre del DocType destino. Para Dynamic Link, options es el fieldname
-	# que indica el destino — no podemos resolverlo sin data real, así que lo
-	# marcamos como destino "?" y el frontend lo muestra como link "dinámico".
+	# Construir aristas globales.
 	edges = []
 	for f in fields:
 		src = f["parent"]
@@ -108,7 +106,6 @@ def get_schema_graph(module: str = "", search: str = "", include_aux: int = 1):
 			continue
 		tgt = (f.get("options") or "").strip()
 		if f["fieldtype"] == "Dynamic Link":
-			# El "options" apunta al campo que decide el doctype destino.
 			edges.append({
 				"id": f"{src}::{f['fieldname']}",
 				"source": src,
@@ -132,7 +129,6 @@ def get_schema_graph(module: str = "", search: str = "", include_aux: int = 1):
 			"custom": int(f.get("is_custom") or 0),
 		})
 
-	# Filtrar por módulo / búsqueda si corresponde.
 	module = (module or "").strip()
 	search = (search or "").strip().lower()
 	if module or search:
@@ -142,24 +138,37 @@ def get_schema_graph(module: str = "", search: str = "", include_aux: int = 1):
 				seed.add(name)
 			if search and search in name.lower():
 				seed.add(name)
-		# 1-hop expansion: incluir vecinos (origen o destino).
-		expanded = set(seed)
-		for e in edges:
-			if e["source"] in seed and e["target"] in doctypes:
-				expanded.add(e["target"])
-			if e["target"] in seed:
-				expanded.add(e["source"])
-		visible = expanded
+		if expand_neighbors:
+			expanded = set(seed)
+			for e in edges:
+				if e["source"] in seed and e["target"] in doctypes:
+					expanded.add(e["target"])
+				if e["target"] in seed:
+					expanded.add(e["source"])
+			visible = expanded
+		else:
+			visible = seed
 	else:
 		visible = set(doctypes.keys())
 
 	if not include_aux:
 		visible = {n for n in visible if not doctypes[n].get("istable")}
 
-	# Armar nodos.
+	# Armar nodos con fields_summary embebido.
 	nodes = []
 	for name in visible:
 		meta = doctypes[name]
+		raw_fields = fields_by_parent.get(name, [])
+		summary = []
+		for f in raw_fields[:_MAX_FIELDS_PREVIEW]:
+			tgt = (f.get("options") or "").strip()
+			summary.append({
+				"label": f.get("label") or f["fieldname"],
+				"fieldname": f["fieldname"],
+				"fieldtype": f["fieldtype"],
+				"target": tgt if f["fieldtype"] != "Dynamic Link" else "(dinámico)",
+				"custom": int(f.get("is_custom") or 0),
+			})
 		nodes.append({
 			"id": name,
 			"label": name,
@@ -167,13 +176,13 @@ def get_schema_graph(module: str = "", search: str = "", include_aux: int = 1):
 			"custom": int(meta.get("custom") or 0),
 			"istable": int(meta.get("istable") or 0),
 			"issingle": int(meta.get("issingle") or 0),
-			"fieldCount": field_count.get(name, 0),
-			"linkCount": link_count.get(name, 0),
+			"fieldCount": len(raw_fields),
+			"linkCount": len(raw_fields),
+			"fields_summary": summary,
+			"more_fields": max(0, len(raw_fields) - _MAX_FIELDS_PREVIEW),
 		})
 
-	# Aristas solo entre nodos visibles. Las Dynamic Link las dejamos pasar
-	# siempre si su origen es visible (el target "*dynamic*" lo agregamos como
-	# nodo placeholder).
+	# Filtrar aristas a las que conectan nodos visibles (o son Dynamic Link).
 	visible_edges = []
 	needs_dynamic = False
 	for e in edges:
@@ -190,17 +199,12 @@ def get_schema_graph(module: str = "", search: str = "", include_aux: int = 1):
 		nodes.append({
 			"id": "*dynamic*",
 			"label": "(destino dinámico)",
-			"module": "",
-			"custom": 0,
-			"istable": 0,
-			"issingle": 0,
-			"fieldCount": 0,
-			"linkCount": 0,
+			"module": "", "custom": 0, "istable": 0, "issingle": 0,
+			"fieldCount": 0, "linkCount": 0,
+			"fields_summary": [], "more_fields": 0,
 			"placeholder": 1,
 		})
 
-	# Lista de módulos disponibles (solo cuando no hay filtro, para popular
-	# el sidebar; igualmente baratísimo de calcular siempre).
 	modules = sorted({d.get("module") for d in doctypes.values() if d.get("module")})
 
 	return {
