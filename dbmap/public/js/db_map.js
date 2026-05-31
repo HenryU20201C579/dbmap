@@ -647,21 +647,21 @@
         els.tabCountRels.textContent = outFields.length + incomings.length;
 
         els.paneRelations.innerHTML = `
-            <div class="dbm-rel-col">
+            <div class="dbm-rel-col dbm-rel-col-side">
                 <div class="dbm-rel-col-header">
                     <span>Lo referencian</span>
                     <span class="dbm-rel-col-header-count">${incomings.length}</span>
                 </div>
                 <div class="dbm-rel-col-list" id="dbm-rels-incoming"></div>
             </div>
-            <div class="dbm-rel-col">
+            <div class="dbm-rel-col dbm-rel-col-center-wrap">
                 <div class="dbm-rel-center">
                     <div class="dbm-rel-center-name">${escapeHtml(srcName)}</div>
                     ${srcNameEs ? `<div class="dbm-rel-center-es">${escapeHtml(srcNameEs)}</div>` : ""}
                     <div class="dbm-rel-center-meta">${escapeHtml(data.table_name || "—")}${data.row_count != null ? ` · ${Number(data.row_count).toLocaleString()} rows` : ""}</div>
                 </div>
             </div>
-            <div class="dbm-rel-col">
+            <div class="dbm-rel-col dbm-rel-col-side">
                 <div class="dbm-rel-col-header">
                     <span>Apunta a</span>
                     <span class="dbm-rel-col-header-count">${outFields.length}</span>
@@ -674,6 +674,8 @@
         incomings.forEach(inc => inList.appendChild(renderRelMini(inc, "incoming")));
         const outList = document.getElementById("dbm-rels-outgoing");
         outFields.forEach(f => outList.appendChild(renderRelMini(f, "outgoing")));
+        // Centra la caja sticky verticalmente respecto al viewport del modal-body.
+        recenterRelCenter();
 
         els.modalDesk.href = `/app/${slugifyDoctype(state.currentDoctype)}`;
     }
@@ -820,6 +822,25 @@
 
     function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
 
+    // Centra verticalmente la caja sticky `.dbm-rel-center` respecto al
+    // viewport del `.dbm-modal-body`. El sticky top se calcula como
+    // (alturaViewport - alturaCaja) / 2 — así la caja queda siempre a la
+    // mitad de la pantalla mientras el user scrollea las listas laterales.
+    function recenterRelCenter() {
+        const body = document.querySelector(".dbm-modal-body");
+        const caja = document.querySelector(".dbm-rel-center");
+        if (!body || !caja) return;
+        // Esperar a que tenga layout (offsetHeight > 0).
+        requestAnimationFrame(() => {
+            const top = Math.max(0, (body.clientHeight - caja.offsetHeight) / 2);
+            caja.style.top = top + "px";
+        });
+    }
+    // Re-centrar al resize de la ventana (afecta la altura del modal-body).
+    window.addEventListener("resize", () => {
+        if (!document.getElementById("dbm-modal-backdrop").hidden) recenterRelCenter();
+    });
+
     // Combina "Label (Traducción)" si hay traducción al español distinta.
     // Devuelve HTML listo para meter en innerHTML.
     function withEsHtml(label, labelEs, esClass) {
@@ -919,6 +940,8 @@
         // Scroll-to-top al cambiar de pestaña.
         const body = document.querySelector(".dbm-modal-body");
         if (body) body.scrollTop = 0;
+        // Si se activa la pestaña de relaciones, recentrar la caja del medio.
+        if (name === "relations") recenterRelCenter();
     }
 
     function focusOnCurrent() {
