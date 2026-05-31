@@ -2,7 +2,7 @@
 {% block title %}DB Map · {{ site_name }}{% endblock %}
 
 {% block head_include %}
-<link rel="stylesheet" href="/assets/dbmap/css/db_map.css?v=12">
+<link rel="stylesheet" href="/assets/dbmap/css/db_map.css?v=13">
 <script src="https://unpkg.com/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
 <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
@@ -123,10 +123,10 @@
           <div id="dbm-pane-form" class="dbm-form-root"></div>
         </div>
         <div class="dbm-modal-pane" data-pane="outgoing">
-          <div class="dbm-modal-grid" id="dbm-pane-outgoing"></div>
+          <div id="dbm-pane-outgoing"></div>
         </div>
         <div class="dbm-modal-pane" data-pane="incoming">
-          <div class="dbm-modal-grid" id="dbm-pane-incoming"></div>
+          <div id="dbm-pane-incoming"></div>
         </div>
       </div>
 
@@ -146,5 +146,5 @@
   </div>
 </div>
 
-<script src="/assets/dbmap/js/db_map.js?v=12"></script>
+<script src="/assets/dbmap/js/db_map.js?v=13"></script>
 {% endblock %}

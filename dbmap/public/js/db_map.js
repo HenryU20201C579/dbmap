@@ -637,17 +637,36 @@
         state.activeFormTab = 0;
         renderFormView();
 
+        // Texto didáctico arriba de cada pane: explica QUÉ está viendo el user.
+        const srcName = dt.name || state.currentDoctype;
+        const srcNameEs = dt.name_es || "";
+        const srcDisplay = srcNameEs ? `${srcName} <span class="dbm-es">(${srcNameEs})</span>` : srcName;
+
         // Outgoing (campos Link/Table del DocType).
         const outFields = (data.fields || []).filter(f =>
             ["Link", "Table", "Table MultiSelect", "Dynamic Link"].includes(f.fieldtype)
         );
-        els.paneOut.innerHTML = "";
-        outFields.forEach(f => els.paneOut.appendChild(renderRelCard(f, "outgoing")));
+        els.paneOut.innerHTML = `
+            <div class="dbm-rel-intro">
+                <strong>${srcDisplay}</strong> apunta a estos DocTypes mediante los campos listados.
+                La flecha indica el sentido de la relación: el DocType actual es el origen.
+            </div>
+            <div class="dbm-rel-list" id="dbm-rel-list-out"></div>
+        `;
+        const outList = document.getElementById("dbm-rel-list-out");
+        outFields.forEach(f => outList.appendChild(renderRelRowErd(f, "outgoing", srcName, srcNameEs)));
         els.tabCountOut.textContent = outFields.length;
 
         // Incoming (otros DocTypes que referencian este).
-        els.paneIn.innerHTML = "";
-        (data.incoming || []).forEach(inc => els.paneIn.appendChild(renderRelCard(inc, "incoming")));
+        els.paneIn.innerHTML = `
+            <div class="dbm-rel-intro">
+                Estos DocTypes apuntan a <strong>${srcDisplay}</strong> desde sus propios campos.
+                La flecha sale del origen y termina en <strong>${escapeHtml(srcName)}</strong>.
+            </div>
+            <div class="dbm-rel-list" id="dbm-rel-list-in"></div>
+        `;
+        const inList = document.getElementById("dbm-rel-list-in");
+        (data.incoming || []).forEach(inc => inList.appendChild(renderRelRowErd(inc, "incoming", srcName, srcNameEs)));
         els.tabCountIn.textContent = (data.incoming || []).length;
 
         els.modalDesk.href = `/app/${slugifyDoctype(state.currentDoctype)}`;
@@ -807,8 +826,14 @@
         return `${label} (${labelEs})`;
     }
 
-    function renderRelCard(rel, kind) {
-        const card = document.createElement("div");
+    // Renderiza UNA relación como fila ERD horizontal:
+    //   [Doctype actual]  ── fieldname (TYPE) ──→  [Target]
+    // El doctype actual va siempre del lado del source (verde, no clickable),
+    // el target es la "otra punta" — para outgoing va a la derecha, para
+    // incoming va a la izquierda (porque el flujo es: otro DocType apunta a mí).
+    function renderRelRowErd(rel, kind, srcDoctype, srcDoctypeEs) {
+        const row = document.createElement("div");
+        row.className = "dbm-rel-row-erd";
         const fieldname = rel.fieldname || "";
         const target = kind === "outgoing" ? rel.options : rel.from_doctype;
         const targetEs = kind === "outgoing" ? (rel.options_es || "") : (rel.from_doctype_es || "");
@@ -816,31 +841,48 @@
         const isCustom = !!rel.is_custom;
         const typeClass = type.includes("Table") ? "is-table"
             : type === "Dynamic Link" ? "is-dynamic"
-            : isCustom ? "is-custom" : "";
-        const arrow = kind === "outgoing" ? "→" : "←";
-        const navigable = target && target !== "*dynamic*";
-        card.className = "dbm-card" + (navigable ? " is-clickable" : "");
-        if (navigable) card.title = `Click para abrir ${target}`;
-        const metaItems = [];
-        if (rel.reqd) metaItems.push("requerido");
-        if (rel.is_unique) metaItems.push("único");
-        if (isCustom) metaItems.push("custom");
-        card.innerHTML = `
-            <div class="dbm-card-line1">
-                <span class="dbm-card-label">${withEsHtml(rel.label || fieldname, rel.label_es, "dbm-card-label-es")}</span>
-                <span class="dbm-card-type ${typeClass}">${escapeHtml(type)}</span>
-            </div>
-            <div class="dbm-card-line1">
-                <span class="dbm-card-arrow">${arrow}</span>
-                <span class="dbm-card-target">${withEsHtml(target || "—", targetEs, "dbm-card-target-es")}</span>
-            </div>
-            <div class="dbm-card-fname">${escapeHtml(fieldname)}</div>
-            ${metaItems.length ? `<div class="dbm-card-meta">${metaItems.map(m=>`<span>${m}</span>`).join("")}</div>` : ""}
-        `;
-        if (navigable) {
-            card.addEventListener("click", () => openDetail(target));
+            : isCustom ? "is-custom" : "is-link";
+        const isDynamic = type === "Dynamic Link";
+        const targetClickable = target && target !== "*dynamic*" && !isDynamic;
+
+        // Caja del source (siempre el doctype actual, resaltada verde).
+        const srcBox = `
+            <div class="dbm-rel-erd-box is-source">
+                <span class="dbm-rel-erd-box-name">${escapeHtml(srcDoctype)}</span>
+                ${srcDoctypeEs ? `<span class="dbm-rel-erd-box-es">${escapeHtml(srcDoctypeEs)}</span>` : ""}
+            </div>`;
+        // Caja del target (clickable si no es dynamic).
+        const tgtClass = isDynamic ? "is-dynamic" : (targetClickable ? "is-target" : "");
+        const tgtBox = `
+            <div class="dbm-rel-erd-box ${tgtClass}" ${targetClickable ? `data-navigate="${escapeAttr(target)}" title="Click para abrir ${escapeAttr(target)}"` : ""}>
+                <span class="dbm-rel-erd-box-name">${escapeHtml(target || "(dinámico)")}</span>
+                ${targetEs ? `<span class="dbm-rel-erd-box-es">${escapeHtml(targetEs)}</span>` : ""}
+            </div>`;
+
+        // Conector central: fieldname encima, flecha, tipo abajo + flags.
+        const flags = [];
+        if (rel.reqd) flags.push("requerido");
+        if (rel.is_unique) flags.push("único");
+        if (isCustom) flags.push("custom");
+        const conn = `
+            <div class="dbm-rel-erd-conn">
+                <span class="dbm-rel-erd-fname" title="${escapeAttr(rel.label || fieldname)}${rel.label_es ? " (" + escapeAttr(rel.label_es) + ")" : ""}">${escapeHtml(fieldname || "—")}</span>
+                <div class="dbm-rel-erd-arrow ${typeClass} ${kind === "incoming" ? "is-back" : ""}">
+                    <span class="dbm-rel-erd-arrow-head">▶</span>
+                </div>
+                <span class="dbm-rel-erd-type ${typeClass}">${escapeHtml(type)}</span>
+                ${flags.length ? `<div class="dbm-rel-erd-flags">${flags.map(f=>`<span>${f}</span>`).join("")}</div>` : ""}
+            </div>`;
+
+        // Outgoing: source izq, target der. Incoming: target izq, source der.
+        row.innerHTML = (kind === "outgoing")
+            ? srcBox + conn + tgtBox
+            : tgtBox + conn + srcBox;
+
+        if (targetClickable) {
+            row.querySelector("[data-navigate]").addEventListener("click", () => openDetail(target));
         }
-        return card;
+        return row;
     }
 
     function renderFieldCard(f) {

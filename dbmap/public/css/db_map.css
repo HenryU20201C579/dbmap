@@ -498,6 +498,176 @@ html, body {
 }
 .dbm-mod-es { font-size: 11px; opacity: .65; margin-left: 4px; }
 
+/* ───── Lista didáctica de relaciones (Apunta a / Lo referencian) ───── */
+/* Cada relación se muestra como una fila ERD horizontal:
+ *   [Doctype actual]  ── fieldname (TYPE) ──→  [Target Doctype]
+ * Más visual que una grid de cards porque enseña la "dirección" de la
+ * relación con la flecha. */
+.dbm-rel-intro {
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    background: var(--dbm-surface-2);
+    border-left: 3px solid var(--dbm-accent);
+    border-radius: 0 var(--dbm-radius-sm) var(--dbm-radius-sm) 0;
+    font-size: 12.5px;
+    color: var(--dbm-text-2);
+    line-height: 1.5;
+}
+.dbm-rel-intro strong {
+    color: var(--dbm-accent);
+    font-weight: 600;
+}
+
+.dbm-rel-list {
+    display: flex; flex-direction: column;
+    gap: 0;
+}
+.dbm-rel-list:empty::after {
+    content: 'Sin relaciones para mostrar.';
+    display: block;
+    text-align: center;
+    color: var(--dbm-text-3);
+    font-size: 12.5px;
+    font-style: italic;
+    padding: 28px 0;
+}
+
+.dbm-rel-row-erd {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.4fr) minmax(140px, 1fr);
+    align-items: center;
+    gap: 14px;
+    padding: 14px 6px;
+    border-bottom: 1px dashed var(--dbm-border-soft);
+}
+.dbm-rel-row-erd:last-child { border-bottom: 0; }
+
+.dbm-rel-erd-box {
+    background: var(--dbm-surface-2);
+    border: 1px solid var(--dbm-border);
+    border-radius: var(--dbm-radius-sm);
+    padding: 8px 12px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--dbm-text);
+    cursor: pointer;
+    transition: border-color .12s, background .12s, transform .12s;
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 0;
+}
+.dbm-rel-erd-box-name {
+    font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dbm-rel-erd-box-es {
+    font-size: 10.5px;
+    color: var(--dbm-text-3);
+    font-style: italic;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dbm-rel-erd-box.is-source {
+    /* El doctype actual: resaltado en verde porque es el "yo" del modal. */
+    border-color: var(--dbm-accent);
+    background: rgba(110,231,183,0.05);
+    color: var(--dbm-accent);
+    cursor: default;
+}
+.dbm-rel-erd-box.is-target:hover {
+    border-color: var(--dbm-accent);
+    background: var(--dbm-surface-3);
+    transform: translateY(-1px);
+}
+.dbm-rel-erd-box.is-dynamic {
+    border-style: dashed;
+    border-color: var(--dbm-dynamic);
+    color: var(--dbm-dynamic);
+    background: rgba(251,191,36,0.05);
+    font-style: italic;
+}
+
+/* Conector horizontal con la flecha + label del campo encima + tipo abajo. */
+.dbm-rel-erd-conn {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+.dbm-rel-erd-fname {
+    font-family: 'Geist Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--dbm-text);
+    background: var(--dbm-surface-3);
+    padding: 2px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--dbm-border-soft);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 100%;
+}
+.dbm-rel-erd-arrow {
+    display: flex; align-items: center;
+    width: 100%;
+    color: var(--dbm-link);
+    gap: 0;
+}
+.dbm-rel-erd-arrow::before {
+    content: ''; flex: 1; height: 1.5px;
+    background: currentColor;
+    opacity: .55;
+}
+.dbm-rel-erd-arrow-head {
+    flex-shrink: 0;
+    margin-left: -2px;
+    font-size: 14px;
+    line-height: 1;
+}
+.dbm-rel-erd-arrow.is-back::before {
+    /* Para "Lo referencian": flecha al revés, head del lado del source. */
+    order: 2;
+}
+.dbm-rel-erd-arrow.is-back .dbm-rel-erd-arrow-head {
+    order: 1;
+    margin-left: 0; margin-right: -2px;
+}
+.dbm-rel-erd-arrow.is-table { color: var(--dbm-table); }
+.dbm-rel-erd-arrow.is-dynamic { color: var(--dbm-dynamic); }
+.dbm-rel-erd-arrow.is-custom { color: var(--dbm-custom); }
+.dbm-rel-erd-type {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: inherit;
+    font-weight: 600;
+}
+.dbm-rel-erd-type.is-link { color: var(--dbm-link); }
+.dbm-rel-erd-type.is-table { color: var(--dbm-table); }
+.dbm-rel-erd-type.is-dynamic { color: var(--dbm-dynamic); }
+.dbm-rel-erd-type.is-custom { color: var(--dbm-custom); }
+.dbm-rel-erd-flags {
+    display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
+    margin-top: 1px;
+}
+.dbm-rel-erd-flags span {
+    font-size: 9px;
+    color: var(--dbm-text-3);
+    background: rgba(0,0,0,.25);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+/* Mobile / narrow: colapsar a layout vertical con flecha abajo. */
+@media (max-width: 800px) {
+    .dbm-rel-row-erd {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        padding: 14px 4px;
+    }
+    .dbm-rel-erd-conn { flex-direction: column; }
+    .dbm-rel-erd-arrow {
+        width: 30px; height: 30px;
+        transform: rotate(90deg);
+        align-self: center;
+    }
+}
+
 /* ───── Vista formulario (estilo Frappe form) ───── */
 /* Imita el form nativo del Desk: pestañas internas del DocType (Tab Break)
  * + secciones (Section Break) + columnas (Column Break) + campos label/input. */
