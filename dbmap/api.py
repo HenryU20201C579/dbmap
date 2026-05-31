@@ -22,6 +22,32 @@ def _require_login():
 		frappe.throw("Login requerido", frappe.PermissionError)
 
 
+def _get_es_dict():
+	"""Diccionario {english: spanish} cacheado por request. Usamos las
+	traducciones nativas de Frappe (frappe + erpnext + apps custom) cargadas
+	con get_full_dict("es"). El dict tiene ~18k entradas en este bench."""
+	if not hasattr(frappe.local, "_dbmap_es_dict"):
+		try:
+			from frappe.translate import get_full_dict
+			frappe.local._dbmap_es_dict = get_full_dict("es") or {}
+		except Exception:
+			frappe.local._dbmap_es_dict = {}
+	return frappe.local._dbmap_es_dict
+
+
+def _es(s):
+	"""Traduce al español. Devuelve "" si no hay traducción (no devolvemos
+	el mismo string para que el frontend solo muestre los paréntesis cuando
+	realmente hay una traducción distinta)."""
+	if not s:
+		return ""
+	d = _get_es_dict()
+	tr = d.get(s)
+	if tr and tr != s:
+		return tr
+	return ""
+
+
 def _fetch_doctypes():
 	"""Devuelve dict {name: {module, custom, istable, issingle, description}}.
 	Excluye DocTypes virtuales (no tienen tabla SQL detrás)."""
@@ -101,7 +127,9 @@ def list_doctypes(search: str = "", module: str = "", limit: int = 30):
 			continue
 		results.append({
 			"name": name,
+			"name_es": _es(name),
 			"module": meta.get("module") or "",
+			"module_es": _es(meta.get("module") or ""),
 			"istable": int(meta.get("istable") or 0),
 			"custom": int(meta.get("custom") or 0),
 			"linkCount": link_counts.get(name, 0),
@@ -227,15 +255,19 @@ def get_schema_graph(module: str = "", search: str = "", doctype: str = "",
 			tgt = (f.get("options") or "").strip()
 			summary.append({
 				"label": f.get("label") or f["fieldname"],
+				"label_es": _es(f.get("label") or ""),
 				"fieldname": f["fieldname"],
 				"fieldtype": f["fieldtype"],
 				"target": tgt if f["fieldtype"] != "Dynamic Link" else "(dinámico)",
+				"target_es": _es(tgt) if f["fieldtype"] != "Dynamic Link" else "",
 				"custom": int(f.get("is_custom") or 0),
 			})
 		nodes.append({
 			"id": name,
 			"label": name,
+			"label_es": _es(name),
 			"module": meta.get("module") or "",
+			"module_es": _es(meta.get("module") or ""),
 			"custom": int(meta.get("custom") or 0),
 			"istable": int(meta.get("istable") or 0),
 			"issingle": int(meta.get("issingle") or 0),
@@ -299,6 +331,9 @@ def get_doctype_detail(name: str):
 		 "description", "autoname", "naming_rule"],
 		as_dict=True,
 	)
+	if dt_row:
+		dt_row["name_es"] = _es(dt_row.get("name") or "")
+		dt_row["module_es"] = _es(dt_row.get("module") or "")
 	# Campos: traemos todos (no solo Link) — útil ver tipos completos.
 	# `unique` es palabra reservada en MySQL, por eso va con backticks.
 	standard = frappe.db.sql(
@@ -337,6 +372,16 @@ def get_doctype_detail(name: str):
 		(name, name),
 		as_dict=True,
 	)
+	# Anotar todos los items con su traducción al español. El frontend muestra
+	# "label (label_es)" si label_es es no-vacío.
+	all_fields = standard + custom_fields
+	for f in all_fields:
+		f["label_es"] = _es(f.get("label") or "")
+		f["options_es"] = _es((f.get("options") or "").strip()) if f.get("fieldtype") in _LINK_TYPES else ""
+	for inc in incoming:
+		inc["label_es"] = _es(inc.get("label") or "")
+		inc["from_doctype_es"] = _es(inc.get("from_doctype") or "")
+
 	# Conteo simple de registros para dar contexto ("Esta tabla tiene 1,245 rows").
 	row_count = None
 	try:
@@ -347,7 +392,7 @@ def get_doctype_detail(name: str):
 
 	return {
 		"doctype": dt_row,
-		"fields": standard + custom_fields,
+		"fields": all_fields,
 		"incoming": incoming,
 		"row_count": row_count,
 		"table_name": "tab" + name,

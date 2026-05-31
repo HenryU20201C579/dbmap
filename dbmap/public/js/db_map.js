@@ -65,11 +65,14 @@
 
     const state = {
         modules: [],
-        moduleCounts: {},   // {moduleName: nDoctypesShown}
+        moduleCounts: {},          // {moduleName: nDoctypesShown}
+        moduleTranslations: {},    // {moduleName: spanishName}
         activeModule: null,
         searchTerm: "",
         cy: null,
         currentDoctype: null,
+        formStructure: null,
+        activeFormTab: 0,
     };
 
     const SS = {
@@ -100,11 +103,15 @@
             // 1ª llamada: sin filtros → trae todos los módulos + conteo total.
             const data = await apiCall("dbmap.api.get_schema_graph", { include_aux: 0 });
             state.modules = data.modules || [];
-            // Conteo de doctypes por módulo: lo derivamos del payload completo.
+            // Conteo + traducción de módulos: lo derivamos del payload completo.
             state.moduleCounts = {};
+            state.moduleTranslations = {};
             (data.nodes || []).forEach(n => {
                 const m = n.module || "(sin módulo)";
                 state.moduleCounts[m] = (state.moduleCounts[m] || 0) + 1;
+                if (n.module_es && !state.moduleTranslations[m]) {
+                    state.moduleTranslations[m] = n.module_es;
+                }
             });
             renderModules();
             els.stats.textContent = `${data.total_doctypes} DocTypes · ${state.modules.length} módulos`;
@@ -133,8 +140,10 @@
             const item = document.createElement("div");
             item.className = "dbm-mod-item";
             item.dataset.module = name;
+            const tr = state.moduleTranslations[name];
+            const esPart = (tr && tr !== name) ? ` <span class="dbm-mod-es">${escapeHtml(tr)}</span>` : "";
             item.innerHTML = `
-                <span class="dbm-mod-name">${escapeHtml(name)}</span>
+                <span class="dbm-mod-name">${escapeHtml(name)}${esPart}</span>
                 <span class="dbm-mod-count">${state.moduleCounts[name] || 0}</span>
             `;
             item.addEventListener("click", () => activateModule(name));
@@ -262,8 +271,9 @@
                 div.className = "dbm-sr-item";
                 div.setAttribute("role", "option");
                 div.dataset.name = it.name;
+                const esPart = it.name_es ? ` <span class="dbm-sr-es">${escapeHtml(it.name_es)}</span>` : "";
                 div.innerHTML = `
-                    <span class="dbm-sr-name">${highlightMatch(it.name, term)}</span>
+                    <span class="dbm-sr-name">${highlightMatch(it.name, term)}${esPart}</span>
                     <span class="dbm-sr-mod">${escapeHtml(it.module || "—")}</span>
                     <span class="dbm-sr-count" title="campos de relación">${it.linkCount}</span>
                 `;
@@ -311,19 +321,20 @@
     // ───── Cytoscape (ERD style) ─────
     function buildErdLabel(n) {
         // Construye el label multilínea del nodo ERD:
-        //   ┌─ DocType ─┐
-        //   │ field1 → Target│
-        //   │ field2 → Target│
+        //   ┌─ DocType (Traducción) ─┐
+        //   │ field1 → Target (Trad)│
         // Cytoscape renderiza con text-wrap:wrap y monospace para alinear.
-        const header = n.label;
+        const header = n.label_es ? `${n.label} (${n.label_es})` : n.label;
         if (n.placeholder) return header;
         if (!n.fields_summary || !n.fields_summary.length) return header;
         const lines = [header, "─".repeat(Math.max(header.length, 14))];
         n.fields_summary.forEach(f => {
-            const tgt = f.target ? "→ " + f.target : "";
             // Truncar fieldname y target para mantener ancho parejo.
             const fname = (f.fieldname || "").slice(0, 22);
-            const target = tgt.slice(0, 28);
+            const targetStr = f.target_es
+                ? `→ ${f.target} (${f.target_es})`
+                : (f.target ? `→ ${f.target}` : "");
+            const target = targetStr.slice(0, 40);
             lines.push(`${fname.padEnd(22, " ")} ${target}`);
         });
         if (n.more_fields > 0) {
@@ -605,11 +616,12 @@
 
     function renderDetail(data) {
         const dt = data.doctype || {};
-        els.modalName.textContent = dt.name || state.currentDoctype;
+        // Header: nombre + traducción al español si existe.
+        els.modalName.innerHTML = withEsHtml(dt.name || state.currentDoctype, dt.name_es, "dbm-modal-name-es");
 
         // Pills de metadata en el header.
         const pills = [];
-        if (dt.module) pills.push(`<span class="dbm-pill">${escapeHtml(dt.module)}</span>`);
+        if (dt.module) pills.push(`<span class="dbm-pill">${escapeHtml(dt.module)}${dt.module_es ? ` · ${escapeHtml(dt.module_es)}` : ""}</span>`);
         pills.push(`<span class="dbm-pill dbm-pill-mono">${escapeHtml(data.table_name || "—")}</span>`);
         if (data.row_count != null) {
             pills.push(`<span class="dbm-pill">${Number(data.row_count).toLocaleString()} rows</span>`);
@@ -718,9 +730,13 @@
     function renderFormField(f) {
         const ft = f.fieldtype || "Data";
         const label = f.label || f.fieldname || "—";
+        const labelEs = f.label_es || "";
         const fname = f.fieldname || "";
         const reqd = f.reqd ? `<span class="dbm-form-req">*</span>` : "";
         const help = f.description ? `<div class="dbm-form-help">${escapeHtml(f.description)}</div>` : "";
+
+        // Helper local: label "English (Español)" listo para HTML.
+        const labelHtml = withEsHtml(label, labelEs, "dbm-form-label-es");
 
         // Caso Check: layout horizontal sin label arriba (label inline a la derecha).
         if (ft === "Check") {
@@ -728,7 +744,7 @@
                 <div class="dbm-form-field">
                     <div class="dbm-form-check">
                         <span class="dbm-check-box"></span>
-                        <span>${escapeHtml(label)}</span>
+                        <span>${labelHtml}</span>
                     </div>
                     ${help}
                 </div>`;
@@ -738,20 +754,23 @@
         if (ft === "HTML" || ft === "Heading") {
             return `
                 <div class="dbm-form-field">
-                    <div class="dbm-form-html">${escapeHtml(label)} <em>(${escapeHtml(ft)})</em></div>
+                    <div class="dbm-form-html">${labelHtml} <em>(${escapeHtml(ft)})</em></div>
                 </div>`;
         }
 
         // Resto: label arriba + "input" visual según tipo.
+        // Target con traducción al español si aplica.
+        const target = (f.options || "").trim();
+        const targetEs = f.options_es || "";
+        const targetHtml = (lbl) => withEsHtml(target || "—", targetEs, "dbm-form-target-es");
+
         let body = "";
         if (ft === "Link") {
-            const target = (f.options || "").trim();
-            body = `<div class="dbm-form-input is-link" data-navigate="${escapeAttr(target)}" title="Click para abrir ${escapeAttr(target)}">→ ${escapeHtml(target || "—")}</div>`;
+            body = `<div class="dbm-form-input is-link" data-navigate="${escapeAttr(target)}" title="Click para abrir ${escapeAttr(target)}">→ ${targetHtml()}</div>`;
         } else if (ft === "Table" || ft === "Table MultiSelect") {
-            const target = (f.options || "").trim();
-            body = `<div class="dbm-form-input is-table" data-navigate="${escapeAttr(target)}" title="Tabla hija — click para abrir ${escapeAttr(target)}">≡ ${escapeHtml(target || "—")} <small style="opacity:.6">(${escapeHtml(ft)})</small></div>`;
+            body = `<div class="dbm-form-input is-table" data-navigate="${escapeAttr(target)}" title="Tabla hija — click para abrir ${escapeAttr(target)}">≡ ${targetHtml()} <small style="opacity:.6">(${escapeHtml(ft)})</small></div>`;
         } else if (ft === "Dynamic Link") {
-            body = `<div class="dbm-form-input is-dynamic" title="DocType destino determinado por el campo '${escapeAttr(f.options || "")}'">→ (dinámico via ${escapeHtml(f.options || "—")})</div>`;
+            body = `<div class="dbm-form-input is-dynamic" title="DocType destino determinado por el campo '${escapeAttr(target)}'">→ (dinámico via ${escapeHtml(target || "—")})</div>`;
         } else if (ft === "Select") {
             const opts = (f.options || "").split("\n").filter(Boolean);
             body = `<div class="dbm-form-input is-empty">${opts.length ? escapeHtml(opts[0]) + (opts.length > 1 ? ` <small style="opacity:.5">(+${opts.length - 1} opciones)</small>` : "") : "(sin opciones)"}</div>`;
@@ -764,7 +783,7 @@
         return `
             <div class="dbm-form-field">
                 <label class="dbm-form-label">
-                    <span>${escapeHtml(label)}</span>
+                    <span>${labelHtml}</span>
                     ${reqd}
                     <span class="dbm-form-fname">${escapeHtml(fname)}</span>
                 </label>
@@ -776,10 +795,23 @@
 
     function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
 
+    // Combina "Label (Traducción)" si hay traducción al español distinta.
+    // Devuelve HTML listo para meter en innerHTML.
+    function withEsHtml(label, labelEs, esClass) {
+        const main = escapeHtml(label || "");
+        if (!labelEs || labelEs === label) return main;
+        return `${main} <span class="${esClass || "dbm-es"}">(${escapeHtml(labelEs)})</span>`;
+    }
+    function withEsText(label, labelEs) {
+        if (!labelEs || labelEs === label) return label || "";
+        return `${label} (${labelEs})`;
+    }
+
     function renderRelCard(rel, kind) {
         const card = document.createElement("div");
         const fieldname = rel.fieldname || "";
         const target = kind === "outgoing" ? rel.options : rel.from_doctype;
+        const targetEs = kind === "outgoing" ? (rel.options_es || "") : (rel.from_doctype_es || "");
         const type = rel.fieldtype || rel.type || "Link";
         const isCustom = !!rel.is_custom;
         const typeClass = type.includes("Table") ? "is-table"
@@ -795,12 +827,12 @@
         if (isCustom) metaItems.push("custom");
         card.innerHTML = `
             <div class="dbm-card-line1">
-                <span class="dbm-card-label">${escapeHtml(rel.label || fieldname)}</span>
+                <span class="dbm-card-label">${withEsHtml(rel.label || fieldname, rel.label_es, "dbm-card-label-es")}</span>
                 <span class="dbm-card-type ${typeClass}">${escapeHtml(type)}</span>
             </div>
             <div class="dbm-card-line1">
                 <span class="dbm-card-arrow">${arrow}</span>
-                <span class="dbm-card-target">${escapeHtml(target || "—")}</span>
+                <span class="dbm-card-target">${withEsHtml(target || "—", targetEs, "dbm-card-target-es")}</span>
             </div>
             <div class="dbm-card-fname">${escapeHtml(fieldname)}</div>
             ${metaItems.length ? `<div class="dbm-card-meta">${metaItems.map(m=>`<span>${m}</span>`).join("")}</div>` : ""}
@@ -822,10 +854,10 @@
         if (f.is_custom) metaItems.push("custom");
         card.innerHTML = `
             <div class="dbm-card-line1">
-                <span class="dbm-card-label">${escapeHtml(f.label || f.fieldname || "—")}</span>
+                <span class="dbm-card-label">${withEsHtml(f.label || f.fieldname || "—", f.label_es, "dbm-card-label-es")}</span>
                 <span class="dbm-card-type">${escapeHtml(ft)}</span>
             </div>
-            ${opts ? `<div class="dbm-card-line1"><span class="dbm-card-arrow">→</span><span class="dbm-card-target">${escapeHtml(opts)}</span></div>` : ""}
+            ${opts ? `<div class="dbm-card-line1"><span class="dbm-card-arrow">→</span><span class="dbm-card-target">${withEsHtml(opts, f.options_es, "dbm-card-target-es")}</span></div>` : ""}
             <div class="dbm-card-fname">${escapeHtml(f.fieldname || "")}</div>
             ${metaItems.length ? `<div class="dbm-card-meta">${metaItems.map(m=>`<span>${m}</span>`).join("")}</div>` : ""}
         `;

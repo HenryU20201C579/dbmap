@@ -470,6 +470,34 @@ html, body {
 .dbm-modal-pane { display: none; }
 .dbm-modal-pane.is-active { display: block; }
 
+/* ───── Traducciones al español (se muestran al lado del label en EN) ───── */
+.dbm-es,
+.dbm-form-label-es,
+.dbm-form-target-es,
+.dbm-modal-name-es,
+.dbm-card-label-es,
+.dbm-card-target-es,
+.dbm-sr-es,
+.dbm-mod-es {
+    font-weight: 400;
+    color: var(--dbm-text-3);
+    font-style: italic;
+}
+.dbm-modal-name-es {
+    font-size: 14px;
+    margin-left: 6px;
+}
+.dbm-form-label-es { font-size: 11px; }
+.dbm-form-target-es { font-size: 11.5px; opacity: .85; }
+.dbm-card-label-es,
+.dbm-card-target-es { font-size: 11px; opacity: .8; }
+.dbm-sr-es {
+    font-size: 11px;
+    opacity: .7;
+    margin-left: 4px;
+}
+.dbm-mod-es { font-size: 11px; opacity: .65; margin-left: 4px; }
+
 /* ───── Vista formulario (estilo Frappe form) ───── */
 /* Imita el form nativo del Desk: pestañas internas del DocType (Tab Break)
  * + secciones (Section Break) + columnas (Column Break) + campos label/input. */
