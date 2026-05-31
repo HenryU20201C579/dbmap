@@ -498,6 +498,202 @@ html, body {
 }
 .dbm-mod-es { font-size: 11px; opacity: .65; margin-left: 4px; }
 
+/* ───── Vista única de relaciones: 3 columnas (incoming | doctype | outgoing) ───── */
+/* Layout grid con la caja del DocType actual fija en el centro y las relaciones
+ * incoming/outgoing como columnas scrollables a los lados.   */
+.dbm-rel-3col {
+    display: grid;
+    grid-template-columns: 1fr minmax(180px, 240px) 1fr;
+    gap: 16px;
+    align-items: stretch;
+    min-height: 100%;
+}
+.dbm-rel-col {
+    display: flex; flex-direction: column;
+    min-width: 0; min-height: 0;
+}
+.dbm-rel-col-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+    padding: 0 4px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--dbm-text-3);
+    font-weight: 600;
+}
+.dbm-rel-col-header-count {
+    background: var(--dbm-surface-2);
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--dbm-text-2);
+    letter-spacing: 0;
+}
+.dbm-rel-col-list {
+    display: flex; flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+}
+.dbm-rel-col-list:empty::after {
+    content: 'Sin relaciones.';
+    text-align: center;
+    color: var(--dbm-text-3);
+    font-size: 12px;
+    font-style: italic;
+    padding: 16px 0;
+}
+
+/* Caja central destacada (el DocType actual). */
+.dbm-rel-center {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px;
+    background: rgba(110,231,183,0.06);
+    border: 2px solid var(--dbm-accent);
+    border-radius: var(--dbm-radius);
+    padding: 20px 16px;
+    text-align: center;
+    position: sticky;
+    top: 0;
+    align-self: center;
+    box-shadow: 0 0 24px rgba(110,231,183,0.08);
+}
+.dbm-rel-center-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--dbm-accent);
+    word-break: break-word;
+}
+.dbm-rel-center-es {
+    font-size: 12px;
+    color: var(--dbm-text-2);
+    font-style: italic;
+}
+.dbm-rel-center-meta {
+    font-size: 10.5px;
+    color: var(--dbm-text-3);
+    margin-top: 4px;
+    font-family: 'Geist Mono', ui-monospace, monospace;
+}
+
+/* Mini-fila para incoming: [Source] ─ fname (TYPE) ─→  (la flecha apunta al centro) */
+/* Mini-fila para outgoing: ─ fname (TYPE) ─→ [Target] (la flecha sale del centro) */
+.dbm-rel-mini {
+    display: grid;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 4px;
+    border-bottom: 1px dashed var(--dbm-border-soft);
+}
+.dbm-rel-mini:last-child { border-bottom: 0; }
+.dbm-rel-mini.is-incoming {
+    grid-template-columns: 1fr auto;
+}
+.dbm-rel-mini.is-outgoing {
+    grid-template-columns: auto 1fr;
+}
+
+.dbm-rel-mini-box {
+    background: var(--dbm-surface-2);
+    border: 1px solid var(--dbm-border);
+    border-radius: var(--dbm-radius-sm);
+    padding: 7px 10px;
+    cursor: pointer;
+    transition: border-color .12s, background .12s, transform .12s;
+    min-width: 0;
+    display: flex; flex-direction: column; gap: 2px;
+}
+.dbm-rel-mini-box:hover {
+    border-color: var(--dbm-accent);
+    background: var(--dbm-surface-3);
+    transform: translateY(-1px);
+}
+.dbm-rel-mini-box.is-dynamic {
+    border-style: dashed;
+    border-color: var(--dbm-dynamic);
+    color: var(--dbm-dynamic);
+    background: rgba(251,191,36,0.05);
+    font-style: italic;
+    cursor: default;
+}
+.dbm-rel-mini-name {
+    font-size: 12px;
+    color: var(--dbm-text);
+    font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dbm-rel-mini-es {
+    font-size: 10px;
+    color: var(--dbm-text-3);
+    font-style: italic;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.dbm-rel-mini-conn {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 2px;
+    min-width: 80px;
+    color: var(--dbm-link);
+}
+.dbm-rel-mini-fname {
+    font-family: 'Geist Mono', ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--dbm-text-2);
+    background: var(--dbm-surface-3);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--dbm-border-soft);
+    max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dbm-rel-mini-arrow {
+    display: flex; align-items: center;
+    width: 100%;
+    color: inherit;
+}
+.dbm-rel-mini-arrow::before {
+    content: ''; flex: 1; height: 1.5px;
+    background: currentColor;
+    opacity: .55;
+}
+.dbm-rel-mini-arrow-head {
+    flex-shrink: 0;
+    margin-left: -2px;
+    font-size: 11px;
+    line-height: 1;
+}
+.dbm-rel-mini-arrow.is-back {
+    flex-direction: row-reverse;
+}
+.dbm-rel-mini-arrow.is-back .dbm-rel-mini-arrow-head {
+    margin-left: 0; margin-right: -2px;
+}
+.dbm-rel-mini-arrow.is-table { color: var(--dbm-table); }
+.dbm-rel-mini-arrow.is-dynamic { color: var(--dbm-dynamic); }
+.dbm-rel-mini-arrow.is-custom { color: var(--dbm-custom); }
+.dbm-rel-mini-type {
+    font-size: 8.5px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-weight: 600;
+    color: inherit;
+}
+
+/* Responsive: en pantallas < 900px colapsamos a stack vertical
+ * (incoming arriba → DocType centro → outgoing abajo). */
+@media (max-width: 900px) {
+    .dbm-rel-3col {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    .dbm-rel-center { position: relative; }
+    .dbm-rel-mini.is-incoming, .dbm-rel-mini.is-outgoing {
+        grid-template-columns: 1fr;
+    }
+    .dbm-rel-mini-arrow { transform: rotate(90deg); width: 30px; }
+}
+
 /* ───── Lista didáctica de relaciones (Apunta a / Lo referencian) ───── */
 /* Cada relación se muestra como una fila ERD horizontal:
  *   [Doctype actual]  ── fieldname (TYPE) ──→  [Target Doctype]

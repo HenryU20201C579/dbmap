@@ -57,10 +57,8 @@
         modalFocus: $("dbm-modal-focus"),
         modalErd: $("dbm-modal-erd"),
         paneForm: $("dbm-pane-form"),
-        paneOut: $("dbm-pane-outgoing"),
-        paneIn: $("dbm-pane-incoming"),
-        tabCountOut: $("dbm-tab-count-out"),
-        tabCountIn: $("dbm-tab-count-in"),
+        paneRelations: $("dbm-pane-relations"),
+        tabCountRels: $("dbm-tab-count-rels"),
     };
 
     const state = {
@@ -599,10 +597,8 @@
         els.modalName.textContent = name;
         els.modalPills.innerHTML = '<span class="dbm-pill dbm-pill-dim">cargando…</span>';
         els.paneForm.innerHTML = '<div style="padding:24px;color:var(--dbm-text-3);font-size:12px;text-align:center">Cargando…</div>';
-        els.paneOut.innerHTML = "";
-        els.paneIn.innerHTML = "";
-        els.tabCountOut.textContent = "0";
-        els.tabCountIn.textContent = "0";
+        els.paneRelations.innerHTML = "";
+        els.tabCountRels.textContent = "0";
         switchTab("form");
         document.body.style.overflow = "hidden";
 
@@ -637,37 +633,47 @@
         state.activeFormTab = 0;
         renderFormView();
 
-        // Texto didáctico arriba de cada pane: explica QUÉ está viendo el user.
+        // Vista única de relaciones en 3 columnas:
+        //   izquierda: incoming (DocTypes que apuntan a este)
+        //   centro:    caja destacada del DocType actual
+        //   derecha:   outgoing (DocTypes a los que apunta este)
         const srcName = dt.name || state.currentDoctype;
         const srcNameEs = dt.name_es || "";
-        const srcDisplay = srcNameEs ? `${srcName} <span class="dbm-es">(${srcNameEs})</span>` : srcName;
 
-        // Outgoing (campos Link/Table del DocType).
         const outFields = (data.fields || []).filter(f =>
             ["Link", "Table", "Table MultiSelect", "Dynamic Link"].includes(f.fieldtype)
         );
-        els.paneOut.innerHTML = `
-            <div class="dbm-rel-intro">
-                <strong>${srcDisplay}</strong> apunta a estos DocTypes mediante los campos listados.
-                La flecha indica el sentido de la relación: el DocType actual es el origen.
-            </div>
-            <div class="dbm-rel-list" id="dbm-rel-list-out"></div>
-        `;
-        const outList = document.getElementById("dbm-rel-list-out");
-        outFields.forEach(f => outList.appendChild(renderRelRowErd(f, "outgoing", srcName, srcNameEs)));
-        els.tabCountOut.textContent = outFields.length;
+        const incomings = data.incoming || [];
+        els.tabCountRels.textContent = outFields.length + incomings.length;
 
-        // Incoming (otros DocTypes que referencian este).
-        els.paneIn.innerHTML = `
-            <div class="dbm-rel-intro">
-                Estos DocTypes apuntan a <strong>${srcDisplay}</strong> desde sus propios campos.
-                La flecha sale del origen y termina en <strong>${escapeHtml(srcName)}</strong>.
+        els.paneRelations.innerHTML = `
+            <div class="dbm-rel-col">
+                <div class="dbm-rel-col-header">
+                    <span>Lo referencian</span>
+                    <span class="dbm-rel-col-header-count">${incomings.length}</span>
+                </div>
+                <div class="dbm-rel-col-list" id="dbm-rels-incoming"></div>
             </div>
-            <div class="dbm-rel-list" id="dbm-rel-list-in"></div>
+            <div class="dbm-rel-col">
+                <div class="dbm-rel-center">
+                    <div class="dbm-rel-center-name">${escapeHtml(srcName)}</div>
+                    ${srcNameEs ? `<div class="dbm-rel-center-es">${escapeHtml(srcNameEs)}</div>` : ""}
+                    <div class="dbm-rel-center-meta">${escapeHtml(data.table_name || "—")}${data.row_count != null ? ` · ${Number(data.row_count).toLocaleString()} rows` : ""}</div>
+                </div>
+            </div>
+            <div class="dbm-rel-col">
+                <div class="dbm-rel-col-header">
+                    <span>Apunta a</span>
+                    <span class="dbm-rel-col-header-count">${outFields.length}</span>
+                </div>
+                <div class="dbm-rel-col-list" id="dbm-rels-outgoing"></div>
+            </div>
         `;
-        const inList = document.getElementById("dbm-rel-list-in");
-        (data.incoming || []).forEach(inc => inList.appendChild(renderRelRowErd(inc, "incoming", srcName, srcNameEs)));
-        els.tabCountIn.textContent = (data.incoming || []).length;
+
+        const inList = document.getElementById("dbm-rels-incoming");
+        incomings.forEach(inc => inList.appendChild(renderRelMini(inc, "incoming")));
+        const outList = document.getElementById("dbm-rels-outgoing");
+        outFields.forEach(f => outList.appendChild(renderRelMini(f, "outgoing")));
 
         els.modalDesk.href = `/app/${slugifyDoctype(state.currentDoctype)}`;
     }
@@ -826,61 +832,49 @@
         return `${label} (${labelEs})`;
     }
 
-    // Renderiza UNA relación como fila ERD horizontal:
-    //   [Doctype actual]  ── fieldname (TYPE) ──→  [Target]
-    // El doctype actual va siempre del lado del source (verde, no clickable),
-    // el target es la "otra punta" — para outgoing va a la derecha, para
-    // incoming va a la izquierda (porque el flujo es: otro DocType apunta a mí).
-    function renderRelRowErd(rel, kind, srcDoctype, srcDoctypeEs) {
+    // Renderiza una "media fila" para la vista 3-col:
+    //   incoming: [DocType externo] ─ fname (TYPE) ──→   (la flecha apunta al centro)
+    //   outgoing: ─ fname (TYPE) ──→ [DocType destino]   (la flecha sale del centro)
+    // En ambos casos el "centro" (DocType actual) NO se renderiza acá porque
+    // ya está fijo en la columna del medio.
+    function renderRelMini(rel, kind) {
         const row = document.createElement("div");
-        row.className = "dbm-rel-row-erd";
+        row.className = `dbm-rel-mini is-${kind}`;
         const fieldname = rel.fieldname || "";
-        const target = kind === "outgoing" ? rel.options : rel.from_doctype;
-        const targetEs = kind === "outgoing" ? (rel.options_es || "") : (rel.from_doctype_es || "");
+        const other = kind === "outgoing" ? rel.options : rel.from_doctype;
+        const otherEs = kind === "outgoing" ? (rel.options_es || "") : (rel.from_doctype_es || "");
         const type = rel.fieldtype || rel.type || "Link";
         const isCustom = !!rel.is_custom;
         const typeClass = type.includes("Table") ? "is-table"
             : type === "Dynamic Link" ? "is-dynamic"
             : isCustom ? "is-custom" : "is-link";
         const isDynamic = type === "Dynamic Link";
-        const targetClickable = target && target !== "*dynamic*" && !isDynamic;
+        const clickable = other && other !== "*dynamic*" && !isDynamic;
 
-        // Caja del source (siempre el doctype actual, resaltada verde).
-        const srcBox = `
-            <div class="dbm-rel-erd-box is-source">
-                <span class="dbm-rel-erd-box-name">${escapeHtml(srcDoctype)}</span>
-                ${srcDoctypeEs ? `<span class="dbm-rel-erd-box-es">${escapeHtml(srcDoctypeEs)}</span>` : ""}
-            </div>`;
-        // Caja del target (clickable si no es dynamic).
-        const tgtClass = isDynamic ? "is-dynamic" : (targetClickable ? "is-target" : "");
-        const tgtBox = `
-            <div class="dbm-rel-erd-box ${tgtClass}" ${targetClickable ? `data-navigate="${escapeAttr(target)}" title="Click para abrir ${escapeAttr(target)}"` : ""}>
-                <span class="dbm-rel-erd-box-name">${escapeHtml(target || "(dinámico)")}</span>
-                ${targetEs ? `<span class="dbm-rel-erd-box-es">${escapeHtml(targetEs)}</span>` : ""}
+        const box = `
+            <div class="dbm-rel-mini-box ${isDynamic ? "is-dynamic" : ""}" ${clickable ? `data-navigate="${escapeAttr(other)}" title="Click para abrir ${escapeAttr(other)}"` : ""}>
+                <span class="dbm-rel-mini-name">${escapeHtml(other || "(dinámico)")}</span>
+                ${otherEs ? `<span class="dbm-rel-mini-es">${escapeHtml(otherEs)}</span>` : ""}
             </div>`;
 
-        // Conector central: fieldname encima, flecha, tipo abajo + flags.
-        const flags = [];
-        if (rel.reqd) flags.push("requerido");
-        if (rel.is_unique) flags.push("único");
-        if (isCustom) flags.push("custom");
+        // El conector: para incoming la flecha va de la caja externa hacia el centro
+        // (apunta a la derecha en pantalla wide). Para outgoing también apunta a la
+        // derecha (sale del centro hacia la caja). is-back invertía la dirección
+        // visual; aquí no la necesitamos porque la posición de la caja ya dice todo.
         const conn = `
-            <div class="dbm-rel-erd-conn">
-                <span class="dbm-rel-erd-fname" title="${escapeAttr(rel.label || fieldname)}${rel.label_es ? " (" + escapeAttr(rel.label_es) + ")" : ""}">${escapeHtml(fieldname || "—")}</span>
-                <div class="dbm-rel-erd-arrow ${typeClass} ${kind === "incoming" ? "is-back" : ""}">
-                    <span class="dbm-rel-erd-arrow-head">▶</span>
+            <div class="dbm-rel-mini-conn">
+                <span class="dbm-rel-mini-fname" title="${escapeAttr(rel.label || fieldname)}${rel.label_es ? " (" + escapeAttr(rel.label_es) + ")" : ""}">${escapeHtml(fieldname || "—")}</span>
+                <div class="dbm-rel-mini-arrow ${typeClass}">
+                    <span class="dbm-rel-mini-arrow-head">▶</span>
                 </div>
-                <span class="dbm-rel-erd-type ${typeClass}">${escapeHtml(type)}</span>
-                ${flags.length ? `<div class="dbm-rel-erd-flags">${flags.map(f=>`<span>${f}</span>`).join("")}</div>` : ""}
+                <span class="dbm-rel-mini-type">${escapeHtml(type)}</span>
             </div>`;
 
-        // Outgoing: source izq, target der. Incoming: target izq, source der.
-        row.innerHTML = (kind === "outgoing")
-            ? srcBox + conn + tgtBox
-            : tgtBox + conn + srcBox;
+        // Layout: incoming = box izq + conn der; outgoing = conn izq + box der.
+        row.innerHTML = (kind === "incoming") ? (box + conn) : (conn + box);
 
-        if (targetClickable) {
-            row.querySelector("[data-navigate]").addEventListener("click", () => openDetail(target));
+        if (clickable) {
+            row.querySelector("[data-navigate]").addEventListener("click", () => openDetail(other));
         }
         return row;
     }

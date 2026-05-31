@@ -2,7 +2,7 @@
 {% block title %}DB Map · {{ site_name }}{% endblock %}
 
 {% block head_include %}
-<link rel="stylesheet" href="/assets/dbmap/css/db_map.css?v=13">
+<link rel="stylesheet" href="/assets/dbmap/css/db_map.css?v=14">
 <script src="https://unpkg.com/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
 <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
 <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
@@ -107,13 +107,9 @@
         <button type="button" class="dbm-tab is-active" data-tab="form" role="tab" aria-selected="true">
           <span>Vista formulario</span>
         </button>
-        <button type="button" class="dbm-tab" data-tab="outgoing" role="tab" aria-selected="false">
-          <span>Apunta a</span>
-          <span class="dbm-tab-count" id="dbm-tab-count-out">0</span>
-        </button>
-        <button type="button" class="dbm-tab" data-tab="incoming" role="tab" aria-selected="false">
-          <span>Lo referencian</span>
-          <span class="dbm-tab-count" id="dbm-tab-count-in">0</span>
+        <button type="button" class="dbm-tab" data-tab="relations" role="tab" aria-selected="false">
+          <span>Relaciones</span>
+          <span class="dbm-tab-count" id="dbm-tab-count-rels">0</span>
         </button>
       </nav>
 
@@ -122,11 +118,9 @@
           <!-- Form-view estilo Frappe: tabs internas del DocType + secciones + columnas. -->
           <div id="dbm-pane-form" class="dbm-form-root"></div>
         </div>
-        <div class="dbm-modal-pane" data-pane="outgoing">
-          <div id="dbm-pane-outgoing"></div>
-        </div>
-        <div class="dbm-modal-pane" data-pane="incoming">
-          <div id="dbm-pane-incoming"></div>
+        <div class="dbm-modal-pane" data-pane="relations">
+          <!-- Vista única 3 columnas: incoming | DocType actual | outgoing. -->
+          <div id="dbm-pane-relations" class="dbm-rel-3col"></div>
         </div>
       </div>
 
@@ -146,5 +140,5 @@
   </div>
 </div>
 
-<script src="/assets/dbmap/js/db_map.js?v=13"></script>
+<script src="/assets/dbmap/js/db_map.js?v=14"></script>
 {% endblock %}
