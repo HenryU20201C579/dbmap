@@ -544,6 +544,19 @@ html, body {
     gap: 2px;
     min-height: 0;
 }
+.dbm-rel-col-side {
+    display: flex; flex-direction: column;
+}
+/* Modo compacto: solo cuando AMBAS listas son cortas (≤6 items c/u) las
+ * centramos verticalmente para que queden alineadas con la caja del medio.
+ * Con muchos items el centrado tiraría las filas fuera del viewport. */
+.dbm-rel-3col.is-compact .dbm-rel-col-side {
+    min-height: 100%;
+}
+.dbm-rel-3col.is-compact .dbm-rel-col-list {
+    flex: 1;
+    justify-content: center;
+}
 .dbm-rel-col-list:empty::after {
     content: 'Sin relaciones.';
     text-align: center;

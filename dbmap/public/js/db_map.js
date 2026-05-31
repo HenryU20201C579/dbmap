@@ -674,6 +674,13 @@
         incomings.forEach(inc => inList.appendChild(renderRelMini(inc, "incoming")));
         const outList = document.getElementById("dbm-rels-outgoing");
         outFields.forEach(f => outList.appendChild(renderRelMini(f, "outgoing")));
+        // Modo compacto: cuando AMBAS listas son cortas, centrarlas verticalmente
+        // para que queden alineadas con la caja del medio (UX más prolija para
+        // DocTypes con pocas relaciones). Con muchos items arrancan arriba y
+        // scrollean naturalmente.
+        const COMPACT_THRESHOLD = 6;
+        const isCompact = incomings.length <= COMPACT_THRESHOLD && outFields.length <= COMPACT_THRESHOLD;
+        els.paneRelations.classList.toggle("is-compact", isCompact);
         // Centra la caja sticky verticalmente respecto al viewport del modal-body.
         recenterRelCenter();
 
